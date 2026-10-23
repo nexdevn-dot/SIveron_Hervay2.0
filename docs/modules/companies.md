@@ -197,3 +197,13 @@ not a separately versioned public SDK.
 
 Inventory filters and contact lifecycle have a separate
 [reuse contract](../reuse/inventory-and-contacts.md).
+
+## Low-cost research guidance
+
+Source/budget integration checked: 2026-10-23. The
+[low-cost research guide](../LOW_COST_LEAD_RESEARCH.md) distinguishes company
+listing data, public website evidence and optional contact enrichment. It includes
+provider/account limits, dated official references and total-cost examples.
+Keep source coverage, imported fields, reviewed fit and contact validation separate;
+local request reservations are not a universal account billing or spend guarantee.
+No quotas, source activation, campaign approvals or sending defaults are changed.

@@ -57,3 +57,11 @@ mail delivery or live model operation.
 References: [setup guide](https://github.com/nexdevn-dot/SIveron_Hervay2.0/blob/main/START_HERE_EN.md),
 [development template](https://github.com/nexdevn-dot/SIveron_Hervay2.0/blob/main/config/development.yaml),
 [publishing guide](https://github.com/nexdevn-dot/SIveron_Hervay2.0/blob/main/docs/PUBLISHING.md).
+
+## Source and budget choices
+
+[Low-cost lead research](Low-cost-lead-research) compares free/local discovery,
+paid data and selective contact enrichment. Its detailed repository guide contains
+dated provider references, imported fields, integration restrictions and practical
+budget approaches. A source offering a paid plan does not mean the current adapter
+supports that plan. Keep research, evidence review, adoption and outreach separate.

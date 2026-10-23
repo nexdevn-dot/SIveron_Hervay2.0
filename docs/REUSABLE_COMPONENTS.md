@@ -4,6 +4,9 @@ Code inspected: 2026-10-23. Scope: the implementation in this repository, not a
 promise of a stable public SDK or a complete portability audit. No application
 code has been extracted or behavior changed by these documents.
 
+For source selection and free/paid research economics, see the
+[low-cost research guide](LOW_COST_LEAD_RESEARCH.md).
+
 ## Choose the smallest useful boundary
 
 | Component | Current reuse level | Detailed contract |

@@ -70,3 +70,11 @@ configuration, authentication, databases, customer records or trained product da
 The [versioned reuse catalog](https://github.com/nexdevn-dot/SIveron_Hervay2.0/blob/main/docs/REUSABLE_COMPONENTS.md)
 is the detailed reference. Source inspection date: **2026-10-23**. These are current
 internal interfaces, not a stable SDK compatibility commitment.
+
+## Source and budget choices
+
+[Low-cost lead research](Low-cost-lead-research) compares free/local discovery,
+paid data and selective contact enrichment. Its detailed repository guide contains
+dated provider references, imported fields, integration restrictions and practical
+budget approaches. A source offering a paid plan does not mean the current adapter
+supports that plan. Keep research, evidence review, adoption and outreach separate.

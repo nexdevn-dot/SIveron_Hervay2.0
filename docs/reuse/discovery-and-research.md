@@ -97,3 +97,12 @@ Tests: [discovery](../../tests/test_discover.py),
 [contact research](../../tests/test_contact_research.py),
 [decision-makers](../../tests/test_decision_makers.py),
 [contact jobs](../../tests/test_contact_jobs.py).
+
+## Source selection and economics
+
+For another application, preserve the distinction between provider offers and the
+subset actually implemented by each adapter. The
+[low-cost research guide](../LOW_COST_LEAD_RESEARCH.md) documents available fields,
+free/paid paths, shared-account quota limits and cash-outlay versus consumption.
+Do not turn provider result counts into guaranteed usable-contact counts, or assume
+local browser automation has no runtime/maintenance cost.

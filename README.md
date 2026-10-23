@@ -51,6 +51,19 @@ Accepting a search suggestion does not start a search or grant additional
 permissions. Reports use stored evidence; a report is not a new, comprehensive
 website audit.
 
+## Low-cost company and contact research
+
+Combine OSM or local Google Maps discovery with fit review and public website
+research; use paid search/contact enrichment selectively for remaining gaps.
+Local Maps has no search API fee, but browser time, maintenance and review still
+cost effort. A company listing is not automatically a qualified or verified contact.
+
+The [source and budget guide](docs/LOW_COST_LEAD_RESEARCH.md) compares free and paid
+routes, actual imported fields, account/adapter limits and cost examples. It separates
+provider offers from current Siveron support; the SerpApi discovery adapter currently
+accepts verified Free accounts only. See also the
+[wiki introduction](https://github.com/nexdevn-dot/SIveron_Hervay2.0/wiki/Low-cost-lead-research).
+
 ## Run locally
 
 The repository includes **no credentials, customer datasets or configured sender

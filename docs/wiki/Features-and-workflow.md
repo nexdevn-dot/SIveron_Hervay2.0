@@ -42,3 +42,11 @@ comprehensive website audit. Approval, suppression and delivery gates remain exp
 
 See the [English user guide](https://github.com/nexdevn-dot/SIveron_Hervay2.0/blob/main/docs/USER_GUIDE_EN.md) or
 [German manual](https://github.com/nexdevn-dot/SIveron_Hervay2.0/blob/main/docs/HANDBUCH_DE.md) for detailed UI instructions.
+
+## Source and budget choices
+
+[Low-cost lead research](Low-cost-lead-research) compares free/local discovery,
+paid data and selective contact enrichment. Its detailed repository guide contains
+dated provider references, imported fields, integration restrictions and practical
+budget approaches. A source offering a paid plan does not mean the current adapter
+supports that plan. Keep research, evidence review, adoption and outreach separate.
