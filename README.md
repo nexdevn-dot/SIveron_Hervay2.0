@@ -1,61 +1,60 @@
 # Siveron — B2B Research & Outreach Workspace
 
-Siveron verbindet Unternehmensrecherche, evidenzbasierte Signale, Kontaktverwaltung,
-KI-gestützte Auswertungen und kontrollierte Kampagnen in einer lokal betriebenen
-Weboberfläche. Die Benutzeroberfläche und die integrierte Hilfe unterstützen
-**Deutsch und Englisch**.
+Siveron combines company research, evidence-based signals, contact management,
+AI-assisted analysis and controlled campaigns in a locally operated web interface.
+The interface and integrated help support **German and English**.
 
-**Produktentwicklung und lokale Erweiterungen: Bao Dang.** Ausgangspunkt ist
-[Harvey von Ethan Rogers](https://github.com/ethanplusai/harvey), v0.3.0
-(`e2632eb`). Anwendung und eigene Änderungen bleiben unter der **MIT-Lizenz**.
-Drittanbieter-Komponenten behalten ihre jeweiligen Lizenzen.
+**Product development and local extensions: Bao Dang.** Built on
+[Harvey by Ethan Rogers](https://github.com/ethanplusai/harvey), v0.3.0
+(`e2632eb`). The application and local modifications remain under the **MIT license**.
+Third-party components retain their respective licenses.
 
-[Handbuch DE](docs/HANDBUCH_DE.md) · [User guide EN](docs/USER_GUIDE_EN.md) ·
-[Architektur](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) ·
-[Autoren](AUTHORS.md) · [Lizenzen](THIRD_PARTY.md)
+[German manual](docs/HANDBUCH_DE.md) · [English user guide](docs/USER_GUIDE_EN.md) ·
+[Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) ·
+[Authors](AUTHORS.md) · [Licenses](THIRD_PARTY.md)
 
-## Was die Plattform bietet
+## What the platform offers
 
-| Bereich | Funktionen |
+| Area | Features |
 | --- | --- |
-| Heute | Überblick über Unternehmen, Kontakte, Signale und anstehende Entscheidungen |
-| Entdecken | Unternehmenssuche nach Begriffen, Ort und Radius; Datenquellenauswahl; Vorschau; Suchlimits; anhaltbare Suchläufe und kompakte Fortschrittsdetails |
-| Datenquellen | Providerbasierte Suche einschließlich OpenStreetMap, optionaler API-Anbieter und lokaler Google-Maps-Browsersuche; Verfügbarkeit und Grenzen unterscheiden sich je Quelle |
-| Signale und Zielgruppen | Explizite Aktivierung von Merkmalen; gespeicherte Beobachtungen; Kohorten und Zielprofile mit „passt“, „passt nicht“ und „unbekannt“ |
-| Unternehmen | Filter, gespeicherte Ansichten, öffentliche E-Mail-Suche, Unternehmensprofile, Quellen und Prüfinformationen, Einzel- und Sammelaktionen, rückgängig machbare Entfernung |
-| Kontaktrecherche | Öffentliche Websites, Web-Suche und Profilhinweise; optionale Hunter-Anbindung; Suchbudgets und Limits; nachvollziehbare Quellen und ausdrückliche Übernahme von Funden |
-| Entscheider und Kontakte | Ansprechpartner recherchieren und prüfen; Firmen- und Personenkontakte; Auswahl bekannter E-Mail-Adressen; Notizen, Kontaktsperren und Papierkorb |
-| Optimierungsberichte | Unternehmensberichte aus gespeicherten Signalen; offene Prüfpunkte statt erfundener Befunde; optionale KI-Erläuterung zu Sichtbarkeit, KI-Suche und Kundengewinnung; Markdown und Druck/PDF |
-| KI-Assistent | Natürlichsprachige Suchvorschläge, Bedienhilfe und Auswertungen vorhandener Daten; individuell einstellbare Funktionen, Sprache, Antwortlänge und Gesprächskontext |
-| Kampagnen | Entwürfe, Rich-Text-Nachrichten, Platzhalter, Anhänge, Folgenachrichten, Vorlagen und geführte Vorbereitung |
-| Postausgang | Prüfung, ausdrückliche Freigaben, Versandbereitschaft und geplante Sequenzen über konfigurierte Mail-Anbindungen |
-| Unterhaltungen und Vertrieb | Kampagnenbezogene Gesprächsansicht, Verkaufschancen, nächste Aufgaben und explizite Ergebnisbewertung |
-| Einstellungen und Hilfe | Lokale Integrationsverwaltung, Nutzung, Agentensteuerung und ausführliche DE/EN-Workflow-Dokumentation |
+| Today | Overview of companies, contacts, signals and pending decisions |
+| Discover | Company search by keywords, location and radius; data source selection; preview; search limits; pausable searches and compact progress details |
+| Data sources | Provider-based search including OpenStreetMap, optional API providers and local Google Maps browser search; availability and limits vary by source |
+| Signals and audiences | Explicit activation of criteria; stored observations; cohorts and target profiles with “match”, “no match” and “unknown” |
+| Companies | Filters, saved views, public email search, company profiles, sources and review information, individual and bulk actions, reversible removal |
+| Contact research | Public websites, web search and profile clues; optional Hunter integration; search budgets and limits; traceable sources and explicit adoption of findings |
+| Decision-makers and contacts | Research and review contact people; company and individual contacts; selection of known email addresses; notes, contact blocks and trash |
+| Optimization reports | Company reports based on stored signals; open review points instead of invented findings; optional AI explanations of visibility, AI search and customer acquisition; Markdown and print/PDF |
+| AI assistant | Natural-language search suggestions, usage guidance and analysis of existing data; configurable features, language, response length and conversation context |
+| Campaigns | Drafts, rich-text messages, placeholders, attachments, follow-ups, templates and guided preparation |
+| Outbox | Review, explicit approvals, sending readiness and scheduled sequences through configured email integrations |
+| Conversations and sales | Campaign conversation view, sales opportunities, next tasks and explicit outcome assessment |
+| Settings and help | Local integration management, usage, agent controls and detailed German/English workflow documentation |
 
-## Typischer Workflow
+## Typical workflow
 
 ```mermaid
 flowchart LR
-    A[Signale auswählen] --> B[Unternehmen entdecken]
-    B --> C[Unternehmen filtern und prüfen]
-    C --> D[Kontakte recherchieren]
-    C --> E[Optimierungsbericht erstellen]
-    D --> F[Kampagne entwerfen]
-    F --> G[Vorschau und Vorbereitung]
-    G --> H[Im Postausgang freigeben]
-    H --> I[Antworten und nächste Aufgaben]
+    A[Select signals] --> B[Discover companies]
+    B --> C[Filter and review companies]
+    C --> D[Research contacts]
+    C --> E[Create optimization report]
+    D --> F[Draft campaign]
+    F --> G[Preview and prepare]
+    G --> H[Approve in outbox]
+    H --> I[Replies and next tasks]
 ```
 
-Der Assistent kann Suchkriterien vorschlagen und gespeicherte Daten auswerten.
-Er startet durch die Übernahme eines Suchvorschlags keine Suche und erhält dadurch
-keine zusätzlichen Berechtigungen. Berichte arbeiten mit gespeicherten Belegen;
-ein Bericht ist keine neue vollständige Website-Prüfung.
+The assistant can suggest search criteria and analyze stored data.
+Accepting a search suggestion does not start a search or grant additional
+permissions. Reports use stored evidence; a report is not a new, comprehensive
+website audit.
 
-## Lokal starten
+## Run locally
 
-Das Repository enthält **keine mitgelieferten Zugangsdaten, Kundenbestände oder
-konfigurierten Absenderidentitäten**. Die öffentliche Entwicklungsvorlage ist neutral:
-E-Mail und LinkedIn deaktiviert, Versandlimit null, Freigaben erforderlich.
+The repository includes **no credentials, customer datasets or configured sender
+identities**. The public development template is neutral: email and LinkedIn
+are disabled, the sending limit is zero and approvals are required.
 
 ```bash
 git clone https://github.com/nexdevn-dot/SIveron_Hervay2.0.git
@@ -65,11 +64,11 @@ bash scripts/doctor.sh
 bash scripts/dashboard.sh
 ```
 
-Dashboard: **http://127.0.0.1:5555/**. Der Dashboard-Start allein ist keine
-Freigabe zum Starten von Kampagnen oder zum Versenden von Nachrichten.
-Siehe [START_HERE_DE.md](START_HERE_DE.md) für die Einrichtung und verbleibende
-Schritte vor dem Live-Einsatz. Python und die gepinnte Codex-CLI werden lokal
-verwaltet; die globale Codex-Installation bleibt unverändert.
+Dashboard: **http://127.0.0.1:5555/**. Starting the dashboard alone does not
+authorize launching campaigns or sending messages.
+See [START_HERE_DE.md](START_HERE_DE.md) (German) for setup and the remaining
+steps before live use. Python and the pinned Codex CLI are managed locally;
+the global Codex installation remains unchanged.
 
 ```bash
 bash scripts/test.sh -q
@@ -77,75 +76,75 @@ scripts/harvey status
 scripts/codex --version
 ```
 
-Technische Paketnamen und CLI-Pfade verwenden aus Kompatibilitätsgründen weiterhin
-`harvey`. Die Produktoberfläche heißt Siveron.
+Technical package names and CLI paths continue to use `harvey` for compatibility.
+The product interface is called Siveron.
 
-## Konfiguration und KI
+## Configuration and AI
 
-- `config/development.yaml`: öffentliche, neutrale Entwicklungsvorlage.
-- `harvey.local.yaml`: private lokale Konfiguration, nicht versioniert.
-- `.env`: private Integrationszugänge, nicht versioniert; `.env.example` enthält leere Felder.
-- SQLite-Zustand, Authentifizierungsdateien, Exporte und Produktwissen bleiben lokal.
-- KI-Anbindung über die vorhandene Claude-/Codex-Integration; benötigt einen
-  geeigneten Zugang und unterliegt dessen Nutzungsgrenzen. Externe Recherche- und
-  Verifikationsanbieter können zusätzliche Kosten verursachen.
-- Die gepinnte Codex-Version und ihre Authentifizierungs-/Werkzeugprüfungen sind
-  Teil der Laufzeitgrenzen. Keine Shell-, Datei-, Netzwerk- oder MCP-Freigaben für
-  das Modell durch die Assistenten-Oberfläche.
+- `config/development.yaml`: public, neutral development template.
+- `harvey.local.yaml`: private local configuration, excluded from version control.
+- `.env`: private integration credentials, excluded from version control; `.env.example` contains empty fields.
+- SQLite state, authentication files, exports and product knowledge remain local.
+- AI access uses the existing Claude/Codex integration; it requires suitable access
+  and is subject to its usage limits. External research and verification providers
+  may incur additional costs.
+- The pinned Codex version and its authentication/tool checks form part of the
+  runtime boundaries. The assistant interface does not grant the model shell,
+  file, network or MCP access.
 
-## Architektur und Entwicklung
+## Architecture and development
 
-Python-Backend mit FastAPI-Dashboard, SQLite-Persistenz und JavaScript/CSS-Oberfläche.
-Die Fachbereiche verwenden gemeinsame Unternehmen, Kontakte und Beobachtungen;
-Rechercheergebnisse werden geprüft, bevor sie als Kontakte übernommen werden.
-Lokale Browserrecherche benötigt keinen separat betriebenen Scraper-Dienst.
-Optionale API-Anbieter bleiben eigenständige Integrationen.
+Python backend with a FastAPI dashboard, SQLite persistence and a JavaScript/CSS
+interface. Functional areas share companies, contacts and observations;
+research findings are reviewed before being adopted as contacts.
+Local browser research does not require a separately operated scraper service.
+Optional API providers remain separate integrations.
 
-| Einstieg | Zweck |
+| Entry point | Purpose |
 | --- | --- |
-| `harvey/dashboard.py` | Dashboard und HTTP-Endpunkte |
-| `harvey/state.py` | Datenbankzustand und Migrationen |
-| `harvey/collectors/` | Unternehmens-, Website-, E-Mail- und Personenrecherche |
-| `harvey/web/` | Oberfläche, lokalisierte Hilfe und lokale Browser-Bundles |
-| `docs/modules/` | Fachbereichsdokumentation mit Code-Einstiegspunkten |
-| `tests/` | Automatisierte Python-Tests |
-| `tools/` | Frontend-Builds, Hilfe-Export und Veröffentlichungsprüfung |
+| `harvey/dashboard.py` | Dashboard and HTTP endpoints |
+| `harvey/state.py` | Database state and migrations |
+| `harvey/collectors/` | Company, website, email and people research |
+| `harvey/web/` | Interface, localized help and local browser bundles |
+| `docs/modules/` | Functional documentation with code entry points |
+| `tests/` | Automated Python tests |
+| `tools/` | Frontend builds, help export and pre-publication checks |
 
-Beginne mit [docs/INDEX.md](docs/INDEX.md) und lies nur das betroffene Modul.
-Aktueller Stand und ursprüngliche Basis werden im
-[Entwicklungsvergleich](docs/DEVELOPMENT_STATUS_2026-10-20.md) getrennt beschrieben.
-Die [Roadmap](docs/ROADMAP.md) enthält Vorschläge; sie ist keine Zusage bereits
-verfügbarer Funktionen. Das bisherige README bleibt als
-[historische Referenz](docs/UPSTREAM_README.md) erhalten und hat für lokale
-Laufzeitvorgaben keinen Vorrang.
+Start with [docs/INDEX.md](docs/INDEX.md) and read only the relevant module.
+The current state and original baseline are described separately in the
+[development comparison](docs/DEVELOPMENT_STATUS_2026-10-20.md).
+The [roadmap](docs/ROADMAP.md) contains proposals; it is not a promise of
+already available features. The previous README remains as a
+[historical reference](docs/UPSTREAM_README.md) and does not override local
+runtime requirements.
 
-## Grenzen und verantwortlicher Betrieb
+## Limitations and responsible operation
 
-Gefundene E-Mail-Adressen sind nicht automatisch technisch verifiziert. Fehlende
-Belege sind kein Beweis für fehlende Eigenschaften. Suchabdeckung, Anbieterlimits,
-CAPTCHAs und Website-Zugriff können Ergebnisse begrenzen. Es gibt keine Garantie
-für vollständige Märkte, Zustellbarkeit, Rankings oder Umsatz.
+Discovered email addresses are not automatically technically verified.
+Missing evidence does not prove that an attribute is absent. Search coverage,
+provider limits, CAPTCHAs and website access may limit results. There is no
+guarantee of complete market coverage, deliverability, rankings or revenue.
 
-Produkttraining, Absenderidentität, Postfach und rechtmäßige Kontaktaufnahme müssen
-für den konkreten Einsatz eingerichtet und geprüft werden. Automatisierte Tests
-mit Mocks beweisen weder Live-Modellzugriff noch Mailzustellung. Bestehende
-Freigabe-, Sperr- und Versandpausen müssen vor Live-Betrieb beachtet werden.
+Product training, sender identity, mailbox setup and lawful outreach must be
+configured and reviewed for the specific use case. Automated tests using mocks
+prove neither live model access nor email delivery. Existing approval
+requirements, blocks and sending pauses must be respected before live operation.
 
-## Veröffentlichungen und Sicherheit
+## Publishing and security
 
-Siehe [Veröffentlichungsleitfaden](docs/PUBLISHING.md). Vor einem Upload:
+See the [publishing guide](docs/PUBLISHING.md). Before uploading:
 
 ```bash
 .venv/bin/python tools/release/check_private_data.py --history
 ```
 
-Die Prüfung vergleicht veröffentlichbare Dateien und Git-Blobs mit lokalen
-Zugangswerten und ausgewählten Schlüsselformaten. Sie gibt keine Schlüssel aus.
-Sie ersetzt keine vollständige manuelle Prüfung oder einen etablierten Secret-Scanner.
-Falls Zugangsdaten früher veröffentlicht wurden, müssen sie beim Anbieter widerrufen
-und ersetzt werden; Löschen im aktuellen Dateistand reicht dann nicht aus.
+The check compares publishable files and Git blobs against local credential
+values and selected key formats. It does not print keys.
+It does not replace a comprehensive manual review or an established secret scanner.
+If credentials were previously published, revoke and replace them with the
+provider; deleting them from the current files is not sufficient.
 
-## English summary
+## Summary
 
 Siveron is a locally operated B2B research and outreach workspace developed by
 Bao Dang on top of Harvey by Ethan Rogers. It combines company discovery,
