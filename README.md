@@ -1,5 +1,7 @@
 # Siveron — B2B Research & Outreach Workspace
 
+**Research your market. Find relevant companies. Build your digital business with a focused, budget-conscious workflow.**
+
 Siveron combines company research, evidence-based signals, contact management,
 AI-assisted analysis and controlled campaigns in a locally operated web interface.
 The interface and integrated help support **German and English**.
@@ -13,6 +15,65 @@ Third-party components retain their respective licenses.
 [German manual](docs/HANDBUCH_DE.md) · [English user guide](docs/USER_GUIDE_EN.md) ·
 [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) ·
 [Authors](AUTHORS.md) · [Licenses](THIRD_PARTY.md)
+
+## A practical starting point for your digital business
+
+Starting a digital business means choosing a market, understanding potential customers
+and building a repeatable way to research and follow up. Siveron brings those steps
+into one workspace, so you can begin with a focused sample and develop your process
+as you learn.
+
+It can support founders, freelancers and small teams exploring B2B services such as:
+
+| Business idea | How you could use Siveron |
+| --- | --- |
+| Web design and digital presence services | Discover local companies, inspect published website information and review stored signals before proposing a conversation |
+| Automation and digital consulting | Build a focused company shortlist, research public contacts and use reviewed evidence to prepare questions about a potential customer's needs |
+| A specialist agency or B2B product | Explore an industry and region, organize relevant companies and keep conversations, outcomes and next tasks connected |
+
+These are possible uses, not preconfigured campaigns or proof that a company needs
+a service. Your offer, market fit and customer relationships remain yours to develop.
+
+### Why start here?
+
+- **Explore before committing a large budget.** Start with local/free research routes
+  and a small sample; use paid data only where it fills a useful gap.
+- **Keep your research connected.** Move from company sources and contact evidence
+  to drafts, reviewed conversations and explicit next tasks in the same workspace.
+- **Turn observations into better questions.** Inspect source-linked signals and
+  company reports rather than relying on a generic pitch or an assumed problem.
+- **Build a process you can repeat.** Reuse search criteria, target profiles and draft
+  templates while reviewing each new audience and message.
+- **Adapt the tool as your business evolves.** The MIT-licensed application runs
+  locally, with documented components you can extend or reuse in another project.
+
+## Find companies and contacts on a small budget
+
+A useful lead starts with a relevant company and a reviewed contact channel.
+**Discover inexpensively → review fit and duplicates → check official websites →
+enrich selected gaps.** This helps focus spending on the companies worth investigating.
+
+| Starting route | What it contributes |
+| --- | --- |
+| OpenStreetMap | Company discovery without a paid search account; available public contact fields vary |
+| Google Maps local | Local browser research without a search API key or separate paid scraper service; available listing phone/site details |
+| Geoapify / SerpApi Free | Additional places or website search within supported free-account limits |
+| Official company websites | Published contact information and person/role evidence for explicit review |
+| Optional paid search and enrichment | DataForSEO, Serper or selected Hunter lookups where the current integration and your budget permit |
+
+Local Maps has no search API fee, but browser runtime, maintenance and review time
+still matter. A listing is not automatically a qualified lead, a verified mailbox or
+permission to contact. Provider offers and Siveron's supported plans differ; for
+example, the current SerpApi discovery adapter accepts verified Free accounts only.
+
+**Choose your next step:** [Compare sources and budgets](docs/LOW_COST_LEAD_RESEARCH.md) ·
+[Install Siveron](START_HERE_EN.md) ·
+[Explore reusable components](docs/REUSABLE_COMPONENTS.md)
+
+The [wiki introduction](https://github.com/nexdevn-dot/SIveron_Hervay2.0/wiki/Low-cost-lead-research)
+and detailed guide explain data fields, dated provider pricing and costs per usable
+company/contact. Start small, assess actual yield and expand the route that works
+for your market. This is a research and workflow tool, not a revenue guarantee.
 
 ## What the platform offers
 
@@ -50,19 +111,6 @@ The assistant can suggest search criteria and analyze stored data.
 Accepting a search suggestion does not start a search or grant additional
 permissions. Reports use stored evidence; a report is not a new, comprehensive
 website audit.
-
-## Low-cost company and contact research
-
-Combine OSM or local Google Maps discovery with fit review and public website
-research; use paid search/contact enrichment selectively for remaining gaps.
-Local Maps has no search API fee, but browser time, maintenance and review still
-cost effort. A company listing is not automatically a qualified or verified contact.
-
-The [source and budget guide](docs/LOW_COST_LEAD_RESEARCH.md) compares free and paid
-routes, actual imported fields, account/adapter limits and cost examples. It separates
-provider offers from current Siveron support; the SerpApi discovery adapter currently
-accepts verified Free accounts only. See also the
-[wiki introduction](https://github.com/nexdevn-dot/SIveron_Hervay2.0/wiki/Low-cost-lead-research).
 
 ## Run locally
 
