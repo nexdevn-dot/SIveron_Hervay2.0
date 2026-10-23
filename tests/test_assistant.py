@@ -138,3 +138,19 @@ def test_assistant_accepts_real_contacts_workspace_context(crm_client,monkeypatc
     monkeypatch.setattr(assistant,'generate_plan',generate)
     assert client.post('/api/assistant/chat',json={'message':'How can I research decision makers?','section':'prospects'}).status_code==200
     assert '"current_section": "prospects"' in generate.call_args.args[1]
+
+
+def test_assistant_help_is_utf8_on_windows_locale(crm_client, monkeypatch):
+    from pathlib import Path
+    client, _ = crm_client
+    read_text = Path.read_text
+    def windows_read_text(path, encoding=None, errors=None, **kwargs):
+        return read_text(path, encoding=encoding or 'cp1252', errors=errors, **kwargs)
+    monkeypatch.setattr(Path, 'read_text', windows_read_text)
+    generate = AsyncMock(return_value=plan('help', section='help'))
+    monkeypatch.setattr(assistant, 'generate_plan', generate)
+    response = client.post('/api/assistant/chat', json={'message':'Suchfortschritt erklären'})
+    assert response.status_code == 200, response.text
+    prompt = generate.call_args.args[1]
+    assert 'Authored help reference:' in prompt
+    assert 'Suchfortschritt' in prompt and 'Ã' not in prompt

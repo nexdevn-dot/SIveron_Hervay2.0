@@ -184,7 +184,7 @@ def install_assistant_routes(app, state_factory):
             from harvey.paths import PROJECT_ROOT
             help_source = ''
             if prefs.help_enabled:
-                chapters = json.loads((PROJECT_ROOT/'harvey/web/assistant-help.json').read_text())
+                chapters = json.loads((PROJECT_ROOT/'harvey/web/assistant-help.json').read_text(encoding='utf-8'))
                 words = set(re.findall(r'\w{3,}', message.casefold()))
                 ranked = sorted(chapters, key=lambda c: sum(w in c['text'].casefold() for w in words) + 3*sum(w in ' '.join(c['title']).casefold() for w in words), reverse=True)
                 help_source = '\n'.join(c['text'] for c in ranked[:3])[:10000]

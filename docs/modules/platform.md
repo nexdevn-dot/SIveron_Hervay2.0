@@ -1,6 +1,6 @@
 # Platform shell, controls, settings and help
 
-Code checked: 2026-10-22. [Index](../INDEX.md) · [Development](../DEVELOPMENT.md)
+Code checked: 2026-10-23. [Index](../INDEX.md) · [Development](../DEVELOPMENT.md)
 
 ## Purpose and workflow
 
@@ -143,3 +143,11 @@ visible and motion respects reduced-motion preferences. Changes still require
 Save assistant settings; this visual update does not enable any preference or
 change permissions automatically. DE/EN labels and unsaved values on language
 changes are preserved by the existing form renderer.
+
+## UTF-8 model context on Windows (2026-10-23)
+
+Assistant help JSON and Brain prompt/skill Markdown are read explicitly as UTF-8,
+independently of the host locale. CP1252 regression tests preserve German and
+non-Latin text without decode errors or mojibake. No model access or capability
+checks change. CI prints individual test names, stops on the first failure and
+bounds each matrix job to 20 minutes for actionable cross-platform diagnostics.

@@ -19,3 +19,19 @@ def test_optional_competitive_knowledge(tmp_path,monkeypatch,caplog,agent,option
     brain.load_skills_for_agent(agent)
     assert 'product_knowledge.md' in caplog.text
     assert 'competitive_intel.md' not in caplog.text
+
+
+@pytest.mark.parametrize('kind', ['prompt', 'skill'])
+def test_authored_context_is_utf8_on_windows_locale(tmp_path, monkeypatch, kind):
+    from pathlib import Path
+    content = 'Geschäftsführer — Grüße 日本語 {{name}}'
+    (tmp_path/'example.md').write_bytes(content.encode('utf-8'))
+    monkeypatch.setattr(module, 'PROMPTS_DIR', tmp_path)
+    monkeypatch.setattr(module, 'SKILLS_DIR', tmp_path)
+    read_text = Path.read_text
+    def windows_read_text(path, encoding=None, errors=None, **kwargs):
+        return read_text(path, encoding=encoding or 'cp1252', errors=errors, **kwargs)
+    monkeypatch.setattr(Path, 'read_text', windows_read_text)
+    brain = module.Brain.__new__(module.Brain)
+    result = brain.load_prompt('example', name='Bao') if kind == 'prompt' else brain.load_skill('example')
+    assert result == (content.replace('{{name}}', 'Bao') if kind == 'prompt' else content)

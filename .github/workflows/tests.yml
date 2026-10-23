@@ -20,6 +20,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python: ["3.11", "3.12"]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -31,7 +32,7 @@ jobs:
       - name: Install
         run: python -m pip install -e ".[dev]" "setuptools>=68" wheel
       - name: Unit, integration, end-to-end and soak tests
-        run: python -m pytest -q
+        run: python -m pytest -v --maxfail=1
       - name: Installed wheel (scripted Codex CLI on PATH)
         if: runner.os != 'Windows'
         env:
