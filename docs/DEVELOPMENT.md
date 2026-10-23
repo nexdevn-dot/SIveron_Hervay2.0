@@ -1,6 +1,6 @@
 # Development workflow
 
-Code checked: 2026-10-19. See [index](INDEX.md) and [AGENTS.md](../AGENTS.md).
+Code checked: 2026-10-23. See [index](INDEX.md) and [AGENTS.md](../AGENTS.md).
 
 ## Commands
 
@@ -59,3 +59,12 @@ statements (including complete trigger bodies) in one transaction; it does not u
 executescript's implicit commit during upgrades. Concurrent dashboard/agent initializers
 serialize, and failures roll back both schema and version. Tests:
 `test_migration_concurrency.py` (parallel upgrade and failed-upgrade rollback).
+
+## Cross-platform CI diagnostics
+
+The matrix runs Python 3.11/3.12 on Linux, macOS and Windows. Individual test names
+are logged and the first failure ends that job; a 20-minute job timeout bounds
+hung workers. Codex runtime remains macOS/Linux-only with the existing Windows
+refusal and capability tests. UTF-8 content is tested with a simulated CP1252
+locale. Contact-job concurrency uses an asyncio event barrier rather than a
+10ms sleep, so the two-worker assertion is independent of SQLite/filesystem speed.

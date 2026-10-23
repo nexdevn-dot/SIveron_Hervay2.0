@@ -20,11 +20,15 @@ async def setup_state(tmp_path, count=5):
 async def test_durable_job_deduplicates_and_limits_concurrency(tmp_path, monkeypatch):
     state, ids = await setup_state(tmp_path)
     active = peak = 0
+    both_entered = asyncio.Event()
     async def lookup(company, state):
         nonlocal active, peak
         active += 1
         peak = max(peak, active)
-        await asyncio.sleep(0.01)
+        if active == 2:
+            both_entered.set()
+        # Do not infer overlap from filesystem/timer speed on a CI runner.
+        await asyncio.wait_for(both_entered.wait(), timeout=10)
         active -= 1
         return {'status': 'found', 'found': 1}
     monkeypatch.setattr(C, 'lookup_company_emails', lookup)
