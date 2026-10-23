@@ -7,6 +7,9 @@ Local Siveron product direction and development: **Bao Dang**; original Harvey b
 Code checked: 2026-10-19. Scope: this local checkout, not upstream Harvey generally.
 Technical documentation uses English; owner communication and user help retain DE/EN support.
 
+Contributor onboarding: [CONTRIBUTING.md](../CONTRIBUTING.md) ·
+[English setup](../START_HERE_EN.md).
+
 ## Read only what the task needs
 
 1. Read repository [working rules](../AGENTS.md).

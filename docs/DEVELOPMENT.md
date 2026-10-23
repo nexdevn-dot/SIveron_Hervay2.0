@@ -2,6 +2,9 @@
 
 Code checked: 2026-10-23. See [index](INDEX.md) and [AGENTS.md](../AGENTS.md).
 
+New contributors: start with [CONTRIBUTING.md](../CONTRIBUTING.md) and the
+[English setup guide](../START_HERE_EN.md) for prerequisites and optional access.
+
 ## Commands
 
 Run from the repository root; examples do not depend on the checkout folder name.
