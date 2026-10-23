@@ -183,7 +183,7 @@ class ProfileCollector:
 
     async def __aenter__(self):
         self._client = httpx.AsyncClient(
-            timeout=TIMEOUT, follow_redirects=True,
+            timeout=TIMEOUT, follow_redirects=False,
             headers={"User-Agent": random.choice(USER_AGENTS),
                      "Accept": "text/html,application/xhtml+xml,*/*;q=0.8"},
         )
@@ -194,17 +194,17 @@ class ProfileCollector:
             await self._client.aclose()
 
     async def _get(self, url: str) -> str:
-        try:
-            resp = await self._client.get(url)
-        except (httpx.HTTPError, ValueError) as e:
-            logger.debug(f"fetch failed {url}: {e}")
-            return ""
-        if resp.status_code != 200:
-            return ""
-        ctype = resp.headers.get("content-type", "")
-        if "html" not in ctype and "xml" not in ctype and "text" not in ctype:
-            return ""
-        return resp.text
+        from harvey.collectors.public_pages import PublicPageReader, public_site_domain
+        from harvey.collectors.company_contacts import _public_company_url
+        domain = getattr(self, '_page_domain', '') or public_site_domain(url)
+        if not hasattr(self, '_page_reader') or self._reader_domain != domain:
+            self._reader_domain = domain
+            self._page_reader = PublicPageReader(self._client,
+                lambda target: _public_company_url(target, domain), content_types=('html','xml','text'))
+        page = await self._page_reader.read(url)
+        self._last_page_url = page.url
+        self.page_diagnostics = (getattr(self, 'page_diagnostics', []) + page.diagnostics)[-24:]
+        return page.html
 
     async def _resolve_site(self, domain: str) -> tuple[str, str]:
         """Return (working base url, homepage html), or ("", "") if none work.
@@ -354,11 +354,23 @@ class ProfileCollector:
                 "evidence_url": url or site,
             })
 
+        self._page_domain = domain
+        self.page_diagnostics = []
         site, home = await self._resolve_site(domain)
         if not home:
             # A failure IS an observation — silent failures look like clean results.
             logger.info(f"profile: {domain} unreachable")
             return obs
+
+        if self.wants('CONTACT_FOUND'):
+            from harvey.collectors.structured_company import save_structured_fields
+            company = await self.state.get_company(company_id)
+            if company:
+                await save_structured_fields(self.state, company, home, getattr(self, '_last_page_url', site))
+            from harvey.collectors.company_contacts import extract_public_emails, relevant_company_emails
+            emails = relevant_company_emails(extract_public_emails(home), domain)
+            if emails:
+                await self.state.save_public_company_emails(company_id, emails, site)
 
         # Ads (they are spending TODAY — the strongest budget signal here)
         add("RUNNING_GOOGLE_ADS", num=1 if self._any(home, GOOGLE_ADS) else 0)
@@ -461,14 +473,18 @@ class ProfileCollector:
         except Exception as e:
             logger.debug(f"mark_company_profiled failed for {company_id}: {e}")
 
-    async def run(self, companies: list[dict], run_id: str = "") -> int:
+    async def run(self, companies: list[dict], run_id: str = "", on_progress=None) -> int:
         """Profile many businesses, flushing observations after each one.
 
         Flush-per-item is deliberate: the observations are the asset, and a
         long run that dies must not take them with it.
         """
         total = 0
-        for company in companies:
+        for index, company in enumerate(companies):
+            if await self.state.get_setting('discovery_paused'):
+                break
+            if on_progress:
+                await on_progress({'current': company.get('name') or company.get('domain', '')})
             domain = (company.get("domain") or "").strip()
             if not domain:
                 continue
@@ -477,6 +493,8 @@ class ProfileCollector:
             except Exception as e:
                 logger.warning(f"profile failed for {domain}: {e}")
                 await self._mark_checked(company["id"])
+                if on_progress:
+                    await on_progress({'completed': index + 1, 'error': True})
                 continue
             # Marked regardless of outcome — an unreachable site still counts
             # as checked, or the same handful gets retried every cycle
@@ -486,10 +504,12 @@ class ProfileCollector:
                 total += await self.state.add_observations(obs, run_id=run_id)
                 logger.info(f"profile: {domain} → {len(obs)} observation(s)")
             await asyncio.sleep(random.uniform(0.4, 1.2))
+            if on_progress:
+                await on_progress({'completed': index + 1})
         return total
 
 
-async def profile_companies(state, companies: list[dict]) -> tuple[int, str]:
+async def profile_companies(state, companies: list[dict], on_progress=None) -> tuple[int, str]:
     """Convenience entry point: opens a run, profiles, closes the run."""
     from harvey.signals import seed_signal_catalog
     await seed_signal_catalog(state)
@@ -503,7 +523,7 @@ async def profile_companies(state, companies: list[dict]) -> tuple[int, str]:
     run_id = await state.start_run("profile", provider="http")
     try:
         async with ProfileCollector(state, confirmed) as collector:
-            n = await collector.run(companies, run_id=run_id)
+            n = await collector.run(companies, run_id=run_id, **({'on_progress': on_progress} if on_progress else {}))
         await state.finish_run(run_id, records=n, cost_usd=0.0)
         return n, run_id
     except Exception as e:

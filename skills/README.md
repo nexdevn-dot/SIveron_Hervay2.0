@@ -1,10 +1,10 @@
 # Skills
 
-Skills are editable Markdown files that give Harvey foundational sales knowledge. Each agent loads the skills it needs before making decisions.
+Skills are editable Markdown files that give Siveron foundational sales knowledge. Each agent loads the skills it needs before making decisions.
 
 ## How Skills Work
 
-When an agent runs, it calls `brain.load_skills_for_agent("agent_name")` which concatenates the relevant skill files and injects them into the prompt. This means you can change Harvey's behavior by editing these files — no code changes needed.
+When an agent runs, it calls `brain.load_skills_for_agent("agent_name")` which concatenates the relevant skill files and injects them into the prompt. This means you can change Siveron's behavior by editing these files — no code changes needed.
 
 ## Skill → Agent Mapping
 
@@ -39,7 +39,7 @@ When an agent runs, it calls `brain.load_skills_for_agent("agent_name")` which c
 These are created by `harvey train <url>` and are specific to your product:
 
 - **`product_knowledge.md`** — Features, benefits, pricing, use cases, pain points, buying triggers
-- **`competitive_intel.md`** — Battle cards for each competitor, differentiation angles, migration paths
+- **`competitive_intel.md`** — Optional battle cards for each competitor, differentiation angles, migration paths. Created only when training identifies competitors; Writer and Handler load it when present. Its absence is expected and does not produce a missing-skill warning.
 
 ## Adding or Editing Skills
 

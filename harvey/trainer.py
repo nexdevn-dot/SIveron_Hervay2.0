@@ -1,4 +1,4 @@
-"""Trainer — give Harvey a URL and it learns everything about the product.
+"""Trainer — give Siveron a URL and it learns everything about the product.
 
 Uses Cloudflare Browser Rendering /crawl API for deep site crawling.
 Falls back to manual scraping if no Cloudflare credentials are configured.
@@ -317,6 +317,8 @@ def brain_section(brain_config: BrainConfig) -> dict:
         section["model"] = brain_config.model
     if brain_config.reasoning_effort:
         section["reasoning_effort"] = brain_config.reasoning_effort
+    if brain_config.codex_restricted_text:
+        section["codex_restricted_text"] = True
     return section
 
 
@@ -335,7 +337,7 @@ class Trainer:
         output_path: str = "harvey.local.yaml",
         max_pages: int = 100,
     ):
-        """Train Harvey on a product website.
+        """Train Siveron on a product website.
 
         1. Deep crawl the site (Cloudflare /crawl or fallback)
         2. Analyze all content with the configured brain
@@ -354,9 +356,9 @@ class Trainer:
             return None
         base_url = f"{parsed.scheme}://{domain}"
 
-        logger.info(f"Training Harvey on {base_url}...")
+        logger.info(f"Training Siveron on {base_url}...")
         print(f"\n{'='*60}")
-        print(f"  Harvey Training Mode")
+        print(f"  Siveron Training Mode")
         print(f"  Learning from: {base_url}")
         print(f"{'='*60}\n")
 
@@ -520,7 +522,7 @@ resolves to the wrong place on Earth instead of failing loudly.
 "titles" MUST be literal job titles exactly as they'd appear on a business
 card or LinkedIn profile ("Owner", "CEO", "President", "Plant Manager",
 "Practice Manager") — never a customer-segment or persona label ("Business
-Owner Segment", "Decision Maker", "Healthcare Professional"). Harvey matches
+Owner Segment", "Decision Maker", "Healthcare Professional"). Siveron matches
 a found contact's title against this list by substring, so a descriptive
 label instead of a real title means every real contact silently fails to
 match and gets discarded. If the buyer is an INDIVIDUAL bought into by
@@ -735,11 +737,11 @@ What prospects do instead of buying a solution like ours:
 
         return {
             "persona": {
-                "name": "Harvey",
+                "name": "Siveron",
                 "company": company,
                 "role": "Business Development",
-                "email": f"harvey@{email_domain}",
-                "linkedin": f"linkedin.com/in/harvey-{email_domain.replace('.', '-')}",
+                "email": f"siveron@{email_domain}",
+                "linkedin": f"linkedin.com/in/siveron-{email_domain.replace('.', '-')}",
                 "tone": tone,
             },
             "product": {
@@ -801,7 +803,7 @@ def main():
         print("  CLOUDFLARE_ACCOUNT_ID=your_account_id")
         print("  CLOUDFLARE_API_TOKEN=your_api_token")
         print("")
-        print("Without Cloudflare credentials, Harvey will use basic HTTP")
+        print("Without Cloudflare credentials, Siveron will use basic HTTP")
         print("scraping (no JavaScript rendering, limited page discovery).")
         sys.exit(1)
 

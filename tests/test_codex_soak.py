@@ -1,7 +1,7 @@
 """Deterministic soak and fault injection through the real Brain and Codex
 adapter against the scripted CLI (tests/fake_codex.py).
 
-Many calls from concurrent clients, mixed with every failure class Harvey
+Many calls from concurrent clients, mixed with every failure class Siveron
 must survive: crashes, partial/malformed/oversized output, hangs, attempted
 tool calls, usage limits, auth/isolation/version denial and cancellation.
 Afterwards: every call ended within its bound, no runtime process or temp

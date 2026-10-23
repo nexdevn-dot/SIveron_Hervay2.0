@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-16T00:00:00Z",
+  "title": "Design System: SIveron Kontakte",
+  "extensions": {
+    "breakpoints": [
+      {
+        "name": "contact-single-column",
+        "value": "600px"
+      },
+      {
+        "name": "dashboard-mobile",
+        "value": "700px"
+      }
+    ],
+    "motion": [
+      {
+        "name": "button-state",
+        "value": "background .15s, border-color .15s, color .15s",
+        "purpose": "Bestehende Dashboard-Buttons; reduced-motion-Regeln des Dashboards gelten weiter."
+      }
+    ],
+    "contactBackdrop": "rgba(9,23,45,.55)",
+    "scope": "Lokale Kontakt- und CRM-Dokumentation im bestehenden SIveron Operate-Modus; keine globale Design-Autorität. CSS-Variablen aus harvey/web/app.css.",
+    "crm": {
+      "contactPageSize": 30,
+      "searchDebounceMs": 300,
+      "dialogMaxWidth": "640px",
+      "dialogMaxHeight": "calc(100dvh - 32px)",
+      "noteHistoryMaxHeight": "35dvh",
+      "campaignEditorMaxWidth": "1000px",
+      "campaignBriefColumns": 2,
+      "mobileBreakpoint": "700px",
+      "maxMessages": 10,
+      "draftStatus": "manual_draft",
+      "reviewScreenshots": [
+        ".impeccable/review/crm-contacts-desktop.png",
+        ".impeccable/review/crm-contacts-user478.png",
+        ".impeccable/review/crm-campaign-desktop.png",
+        ".impeccable/review/crm-campaign-mobile.png"
+      ]
+    }
+  },
+  "components": [
+    {
+      "name": "Primärbutton",
+      "kind": "button",
+      "html": "<button class=\"ds-primary\">Kontakt speichern</button>",
+      "css": ".ds-primary{font-family:var(--sans);font-size:13px;background:var(--accent);color:#fff;padding:7px 14px;border:1px solid transparent;border-radius:var(--r-sm);cursor:pointer}.ds-primary:hover{opacity:.86}.ds-primary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.ds-primary:active{transform:translateY(.5px)}",
+      "refersTo": "button-primary"
+    },
+    {
+      "name": "Sekundärbutton",
+      "kind": "button",
+      "html": "<button class=\"ds-secondary\">Abbrechen</button>",
+      "css": ".ds-secondary{font-family:var(--sans);font-size:13px;background:none;color:var(--text-2);padding:7px 14px;border:1px solid var(--border-strong);border-radius:var(--r-sm)}.ds-secondary:hover{border-color:var(--text-3);color:var(--text)}.ds-secondary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}"
+    },
+    {
+      "name": "Eingabe",
+      "kind": "input",
+      "html": "<label class=\"ds-label\">Vorname<input class=\"ds-input\" autocomplete=\"given-name\"></label>",
+      "css": ".ds-label{display:block;font:500 11.5px var(--sans);color:var(--text-3)}.ds-input{display:block;font-family:var(--sans);font-size:13px;padding:8px 11px;background:var(--bg);color:var(--text);border:1px solid var(--border-strong);border-radius:var(--r-sm)}.ds-input:focus{outline:none;border-color:var(--text-3)}",
+      "refersTo": "input"
+    },
+    {
+      "name": "Vorschlag",
+      "kind": "card",
+      "html": "<article class=\"ds-candidate\"><strong>Personenvorschlag</strong><p>Position nicht angegeben · Unternehmen</p><a href=\"#\">Quelle öffnen</a></article>",
+      "css": ".ds-candidate{font:14px/1.55 var(--sans);color:var(--text);padding:18px 0;border-top:1px solid var(--border)}.ds-candidate p{margin:6px 0 12px;overflow-wrap:anywhere}.ds-candidate a{color:inherit;text-underline-offset:2px}.ds-candidate a:hover{color:var(--accent-strong)}.ds-candidate a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}"
+    },
+    {
+      "name": "Fehler im Dialog",
+      "kind": "custom",
+      "html": "<p class=\"ds-error\" role=\"alert\">Die Anfrage ist fehlgeschlagen. Bitte erneut versuchen.</p>",
+      "css": ".ds-error{font:14px/1.55 var(--sans);color:var(--danger,#b42318)}"
+    },
+    {
+      "name": "Notizverlauf",
+      "kind": "custom",
+      "description": "Datierte Notizen, getrennt durch Linien; Textumbrüche bleiben erhalten.",
+      "html": "<article class=\"ds-note\"><small>Notizdatum</small><p>Gesprächsnotiz</p></article>",
+      "css": ".ds-note{font:14px/1.55 var(--sans);color:var(--text);padding:16px 0;border-top:1px solid var(--border)}.ds-note small{color:var(--text-3)}.ds-note p{white-space:pre-wrap;overflow-wrap:anywhere}"
+    },
+    {
+      "name": "Nachricht im Kampagnenentwurf",
+      "kind": "custom",
+      "description": "Fieldset für Betreff, Nachricht und Verzögerung; unter 700px kompakter.",
+      "html": "<fieldset class=\"ds-step\"><legend>Nachricht 1</legend><label for=\"ds-subject\">Betreff</label><input id=\"ds-subject\" value=\"Guten Tag {{first_name}}\"></fieldset>",
+      "css": ".ds-step{font:14px/1.55 var(--sans);color:var(--text);border:1px solid var(--border);border-radius:8px;margin:20px 0;padding:20px;min-width:0}.ds-step legend{font-weight:600;padding:0 8px}.ds-step label{display:block;margin:16px 0 6px;color:var(--text-3)}.ds-step input{box-sizing:border-box;width:100%;font:13px var(--sans);padding:8px 11px;background:var(--bg);color:var(--text);border:1px solid var(--border-strong);border-radius:var(--r-sm)}.ds-step input:focus{outline:none;border-color:var(--text-3)}.ds-step input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}@media(max-width:700px){.ds-step{padding:16px}}"
+    }
+  ]
+}

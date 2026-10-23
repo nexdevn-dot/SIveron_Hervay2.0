@@ -1,7 +1,7 @@
 """End-to-end: the real heartbeat, agents, Brain and Codex adapter, driven
 through the scripted Codex CLI (tests/fake_codex.py).
 
-Everything outside Harvey is a fixture: a disposable database and config,
+Everything outside Siveron is a fixture: a disposable database and config,
 a capturing mail transport (nothing is ever sent over the network), a
 stubbed Scout and profiler (they would reach the internet), and a fake
 ChatGPT login. These tests check what an operator would see across whole
@@ -37,7 +37,7 @@ FAKE = str(Path(__file__).with_name("fake_codex.py"))
 FIXTURES = Path(__file__).with_name("fixtures")
 
 BASE = {
-    "persona": {"name": "Harvey", "company": "Acme Tools", "role": "BD",
+    "persona": {"name": "Siveron", "company": "Acme Tools", "role": "BD",
                 "email": "harvey@acme.example", "linkedin": "", "tone": "direct"},
     "product": {"name": "Widget", "description": "Widgets for teams", "pricing": "$10",
                 "key_benefits": ["fast"], "objection_responses": {}},
@@ -54,7 +54,7 @@ FAKE_CLAUDE = (
 
 
 class Harness:
-    """One disposable Harvey install wired to fixtures."""
+    """One disposable Siveron install wired to fixtures."""
 
     def __init__(self, monkeypatch, tmp_path, provider="codex", model="gpt-5.5", db=None):
         self.tmp = tmp_path
@@ -136,7 +136,7 @@ class Harness:
         self.config = HarveyConfig(**BASE, brain=brain)
 
     async def run_cycles(self, n=1, between=None):
-        """Run one heartbeat (one Harvey process) for ``n`` cycles.
+        """Run one heartbeat (one Siveron process) for ``n`` cycles.
         ``between[k]`` runs after cycle k, inside the same process."""
         self.cycles = 0
         self.stop_after = n
@@ -196,10 +196,20 @@ def _reply(body, provider_id="in-1", email="jane@acme.com"):
 
 async def _approved_item(state, email="bob@beta.com"):
     pid = await seed_prospect(state, email=email, status="contacted")
+    # A due follow-up needs evidence of its successful predecessor. Keep these
+    # model/mailbox safety tests eligible under the sequence-spacing contract.
+    from datetime import datetime, timedelta, timezone
+    previous_at = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=4)).isoformat()
+    previous = await state.add_outbox_item(
+        prospect_id=pid, to_email=email, subject="previous message",
+        body="Initial message.", send_at=previous_at, status="sent",
+        campaign_id="c-1", step=1,
+    )
+    await state.update_outbox_item(previous, sent_at=previous_at)
     return await state.add_outbox_item(
         prospect_id=pid, to_email=email, subject="following up",
         body="Hi Bob, any thoughts on this?", send_at=_now_iso(), status="approved",
-        campaign_id="c-1", step=2,
+        campaign_id="c-1", step=2, delay_days=3,
     )
 
 
@@ -238,7 +248,7 @@ async def test_approved_email_is_delivered_once_across_cycles(harvey):
     await _approved_item(harvey.state)
     await harvey.run_cycles(3)
     assert [m["to"] for m in harvey.mail.sent] == ["bob@beta.com"]
-    assert len(await harvey.state.get_outbox(status="sent")) == 1
+    assert len(await harvey.state.get_outbox(status="sent")) == 2  # predecessor + follow-up
     assert await harvey.state.get_usage_today("codex") == 0  # sending needs no model
 
 
@@ -285,7 +295,7 @@ async def test_expired_login_pauses_everything_and_recovers_after_renewal(harvey
     assert await harvey.state.is_reply_processed("in-1")
     assert [m["to"] for m in harvey.mail.sent] == ["bob@beta.com"]
     assert (await harvey.status())["status"] == "ok"
-    assert renewed != before and auth.read_bytes() == renewed  # Harvey never wrote it
+    assert renewed != before and auth.read_bytes() == renewed  # Siveron never wrote it
 
 
 @pytest.mark.asyncio
@@ -422,7 +432,7 @@ async def test_no_final_answer_escalates_to_a_human_without_replying(harvey):
 
 
 def _load_pre_codex_db(path: Path):
-    """A database written by Harvey 0.2.1 (before the Codex provider)."""
+    """A database written by Siveron 0.2.1 (before the Codex provider)."""
     con = sqlite3.connect(path)
     con.executescript((FIXTURES / "pre_codex_harvey_0_2_1.sql").read_text())
     con.close()
@@ -685,7 +695,7 @@ async def test_a_reply_cancels_its_due_follow_up_before_the_send_phase(harvey):
     await harvey.run_cycles(1)
     assert harvey.mail.sent == []
     assert len(await harvey.state.get_outbox(status="cancelled")) == 1
-    assert len(await harvey.state.get_outbox(status="pending_review")) == 1  # Harvey's answer
+    assert len(await harvey.state.get_outbox(status="pending_review")) == 1  # Siveron's answer
     assert await harvey.state.is_reply_processed("in-1")
 
 
@@ -765,7 +775,7 @@ async def test_mailbox_error_holds_sends_until_replies_can_be_read(monkeypatch, 
     await harvey.run_cycles(3, between={1: after_failure})
     assert seen["sent"] == []
     assert [m["to"] for m in harvey.mail.sent] == ["bob@beta.com"]  # once, after recovery
-    assert len(await harvey.state.get_outbox(status="sent")) == 1
+    assert len(await harvey.state.get_outbox(status="sent")) == 2  # predecessor + follow-up
 
 
 @pytest.mark.asyncio
@@ -818,3 +828,31 @@ async def test_a_message_that_fails_to_process_holds_that_cycles_sends(harvey, m
     await harvey.run_cycles(2, between={1: after_first})
     assert seen["sent"] == []
     assert [m["to"] for m in harvey.mail.sent] == ["bob@beta.com"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('hold',[None,'paused','disabled','cap','mailbox','reply','opt_out'])
+async def test_quota_pause_drains_only_approved_mail_with_safety_checks(harvey,monkeypatch,hold):
+    from unittest.mock import AsyncMock
+    await harvey.state.init_db()
+    await _approved_item(harvey.state)
+    pid=await seed_prospect(harvey.state,email='pending@acme.com')
+    await harvey.state.add_outbox_item(prospect_id=pid,to_email='pending@acme.com',subject='Question',body='Hello.',send_at=_now_iso(),status='pending_review')
+    monkeypatch.setattr(brain_mod.Brain,'is_within_budget',AsyncMock(return_value=False))
+    think=AsyncMock(side_effect=AssertionError('No inference allowed in delivery-only mode'))
+    monkeypatch.setattr(brain_mod.Brain,'think',think)
+    if hold=='paused': await harvey.state.set_setting('sending_paused','manual pause')
+    if hold=='disabled': harvey.config.channels.email.enabled=False
+    if hold=='cap': harvey.config.channels.email.max_daily_sends=0
+    if hold=='mailbox': harvey.mail.get_replies=AsyncMock(side_effect=RuntimeError('Mailbox unavailable'))
+    if hold in ('reply','opt_out'):
+        harvey.mail.inbound=[_reply('Please stop emailing me' if hold=='opt_out' else 'Thanks for your email',email='bob@beta.com')]
+    await harvey.run_cycles(1)
+    assert len(harvey.mail.sent)==(1 if hold is None else 0)
+    assert len(await harvey.state.get_outbox(status='pending_review'))==1
+    assert harvey.scout_runs==0
+    think.assert_not_awaited()
+    if hold in ('reply','opt_out'):
+        assert not await harvey.state.is_reply_processed('in-1')
+        assert await harvey.state.get_outbox(status='cancelled')
+    if hold=='opt_out': assert await harvey.state.is_contact_suppressed('', 'bob@beta.com')

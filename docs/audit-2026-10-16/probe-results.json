@@ -1,0 +1,27 @@
+{
+  "gmail_failed_fetch_reported_complete": true,
+  "smtp_failed_fetch_reported_complete": true,
+  "emails_sent_despite_pause_after_first": 2,
+  "concurrent_sends_of_single_outbox_row": 2,
+  "legacy_activated_despite_pause_approval_and_bad_content": 1,
+  "legacy_outbox_rows": 0,
+  "unverified_new_prospect_actions_before_after_writer": [
+    "write_campaign",
+    "write_campaign"
+  ],
+  "draft_campaigns_after_writer": 0,
+  "handler_success_on_processing_failure": false,
+  "failed_message_marked_processed": true,
+  "native_reply_campaign_id": "",
+  "native_campaign_reported_reply_count": 0,
+  "trainer_generated_email_settings": {
+    "enabled": true,
+    "provider": "instantly",
+    "max_daily_sends": 50
+  },
+  "trainer_generated_linkedin_enabled": true,
+  "confirmed_signals_during_scout_enrichment": 0,
+  "scout_unconfirmed_tech_entries": 1,
+  "scout_unconfirmed_hiring_entries": 1,
+  "old_agency_remains_in_cohort_after_new_negative_scan": true
+}

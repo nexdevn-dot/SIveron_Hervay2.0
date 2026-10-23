@@ -139,7 +139,7 @@ async def test_brain_records_usage_from_payload(state):
 
 @pytest.mark.asyncio
 async def test_usage_is_harvey_only(state):
-    """Sanity: the ledger only contains rows Harvey's Brain wrote. There is
+    """Sanity: the ledger only contains rows Siveron's Brain wrote. There is
     no transcript scan to pull in other projects' Claude sessions."""
     import harvey.usage as usage_mod
     assert not hasattr(usage_mod, "reconcile_transcripts")

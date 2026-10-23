@@ -1,4 +1,4 @@
--- Database written by Harvey 0.2.1 (commit 7940da4, before the Codex provider):
+-- Database written by SIveron 0.2.1 (commit 7940da4, before the Codex provider):
 -- one contacted prospect, one Claude call and its usage event, one setting.
 PRAGMA user_version = 10;
 BEGIN TRANSACTION;

@@ -434,7 +434,7 @@ def _answering(answers, prompts):
 
 
 @pytest.mark.parametrize("answers, expected", [
-    (["codex", ""], BrainConfig(provider="codex", model="gpt-5.5")),         # accept suggestion
+    (["codex", ""], BrainConfig(provider="codex", model="gpt-6-luna", codex_restricted_text=True)),  # accept suggestion
     (["codex", "gpt-6-sol"], BrainConfig(provider="codex", model="gpt-6-sol")),  # explicit kept
     (["codex", "--model", "my-model"], BrainConfig(provider="codex", model="my-model")),
     (["claude", ""], BrainConfig()),
@@ -596,7 +596,7 @@ def _render_js(func: str, data, helpers=("escHtml", "formatDate")) -> str:
         match = re.search(rf"^function {name}\(.*?^}}\n", source, re.S | re.M)
         assert match, name
         funcs.append(match.group(0))
-    script = "\n".join(funcs) + f"\nprocess.stdout.write({func}({json.dumps(data)}));"
+    script = "const tr = text => text;\n" + "\n".join(funcs) + f"\nprocess.stdout.write({func}({json.dumps(data)}));"
     return subprocess.run([node, "-e", script], capture_output=True, text=True,
                           check=True, timeout=30).stdout
 

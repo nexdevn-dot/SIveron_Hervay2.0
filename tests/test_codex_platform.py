@@ -67,7 +67,7 @@ async def test_paths_with_spaces_and_non_ascii(fake, tmp_path, monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.skipif(not POSIX, reason="POSIX wrapper script; Windows uses a .cmd shim")
 async def test_real_executable_in_a_path_with_spaces(native_home, tmp_path, monkeypatch):
-    """No routing fixture: Harvey execs a real file whose path has spaces and
+    """No routing fixture: Siveron execs a real file whose path has spaces and
     non-ASCII, found through PATH like the npm `codex` shim."""
     bindir = tmp_path / "Program Files ü" / "codex bin"
     bindir.mkdir(parents=True)

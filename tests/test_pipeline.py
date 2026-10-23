@@ -287,3 +287,18 @@ async def test_exclusions_also_read_the_value(state):
 
     # Only A actually lacks booking, so excluding it leaves B.
     assert await state.cohort(["NO_SCHEMA_MARKUP"], exclude=["NO_ONLINE_BOOKING"]) == [b]
+
+
+@pytest.mark.asyncio
+async def test_optional_target_profile_evaluates_only_this_run_without_discarding(state,config,monkeypatch):
+    from types import SimpleNamespace
+    cid=await state.add_company(Company(id='run-company',name='Run company'))
+    await state.add_company(Company(id='backlog-company',name='Backlog company'))
+    async def discover(*args,**kwargs):
+        return SimpleNamespace(as_dict=lambda:{'company_ids':[cid],'new_companies':1},errors=[],stopped='')
+    monkeypatch.setattr(D,'run_discovery',discover)
+    report=await P.run_prospecting(state,config,profile=False,target_profile={'name':'Required website gap','require':['NO_WEBSITE'],'exclude':[],'max_age_days':90})
+    assert report.target_summary['counts']=={'match':0,'no_match':0,'unknown':1}
+    assert report.target_summary['items'][0]['id']==cid
+    assert await state.get_company(cid) is not None
+    assert await state.get_company('backlog-company') is not None

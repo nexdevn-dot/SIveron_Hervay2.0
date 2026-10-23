@@ -30,8 +30,22 @@ from urllib.parse import urlparse
 import httpx
 
 from harvey.models import Company
+from harvey.collectors.parking import parking_intent, parking_operator
 
 logger = logging.getLogger("harvey.collectors.discover")
+
+
+class _RedactAPIKeys(logging.Filter):
+    def filter(self, record):
+        message = record.getMessage()
+        record.msg = re.sub(r'([?&]api_?key=)[^&\s\"\x27]+', r'\1[redacted]', message, flags=re.I)
+        record.args = ()
+        return True
+
+
+# These APIs authenticate with query parameters. httpx normally logs URLs at
+# INFO, including keys, so scrub its request messages before handlers see them.
+logging.getLogger("httpx").addFilter(_RedactAPIKeys())
 
 TIMEOUT = httpx.Timeout(connect=10.0, read=45.0, write=10.0, pool=10.0)
 
@@ -107,7 +121,7 @@ def is_junk(domain: str, name: str = "") -> bool:
 # the settings table: a given city is looked up once, ever.
 
 NOMINATIM = "https://nominatim.openstreetmap.org/search"
-GEOCODE_UA = "Harvey/0.1 (open-source sales agent; github.com/ethanplusai/harvey)"
+GEOCODE_UA = "Siveron/0.1 (open-source sales agent; github.com/ethanplusai/harvey)"
 
 
 async def geocode_city(state, city: str, radius_km: int = 40,
@@ -150,7 +164,8 @@ async def geocode_city(state, city: str, radius_km: int = 40,
 
 async def resolve_coordinates(state, queries: list["DiscoveryQuery"],
                               radius_km: int = 40,
-                              client: httpx.AsyncClient | None = None
+                              client: httpx.AsyncClient | None = None,
+                              on_progress=None, radius_km_override=None
                               ) -> list["DiscoveryQuery"]:
     """Fill in coordinates for any query that lacks them.
 
@@ -160,10 +175,18 @@ async def resolve_coordinates(state, queries: list["DiscoveryQuery"],
     """
     needed = {q.location for q in queries if q.location and not q.coordinate}
     points: dict[str, str] = {}
+    if on_progress:
+        await on_progress({'stage': 'geocoding', 'total': len(needed), 'completed': 0, 'current': ''})
     for i, city in enumerate(sorted(needed)):
         if i:
             await asyncio.sleep(1.1)     # Nominatim: max 1 request/second
-        points[city] = await geocode_city(state, city, radius_km, client)
+        if await state.get_setting('discovery_paused'):
+            break
+        if on_progress:
+            await on_progress({'current': city})
+        points[city] = await geocode_city(state, city, radius_km_override or radius_km, client)
+        if on_progress:
+            await on_progress({'completed': i + 1})
 
     for query in queries:
         if not query.coordinate:
@@ -193,9 +216,10 @@ class Business:
     external_id: str = ""            # "<provider>:<stable id>"
     source_url: str = ""
     provider: str = ""
+    public_email: str = ""
 
     def identity(self) -> str:
-        return self.domain or self.external_id
+        return (self.external_id or self.domain) if self.provider == "google_maps" else (self.domain or self.external_id)
 
 
 @dataclass
@@ -208,6 +232,12 @@ class DiscoveryQuery:
     coordinate: str = ""             # "lat,lng,radius_km" for listings providers
     depth: int = 30                  # SERP depth; ignored by listings providers
     limit: int = 100                 # max records to take from one query
+
+    maps_mode: str = "quick"
+    maps_filter: str = "all"
+    maps_resume: bool = True
+    maps_origin: str = ""
+    maps_cell: str = ""
 
     def keyword(self) -> str:
         return f"{self.term} {self.location}".strip()
@@ -250,6 +280,19 @@ class DiscoveryProvider:
     last_cost: float = 0.0
 
 
+class GoogleMaps(DiscoveryProvider):
+    key = "google_maps"
+    label = "Google Maps (local)"
+    signup_url = "https://www.google.com/maps"
+    kind = "listings"
+    blurb = "Local browser search. No separate service or API key."
+    cost_note = "No API fees. Browser runtime and network usage still apply."
+    caveat = "Experimental: incomplete coverage and page changes are possible. Google Maps terms apply."
+
+    async def fetch(self, client, env, query):
+        raise RuntimeError("Google Maps requires the local discovery runner.")
+
+
 class DataForSEOListings(DiscoveryProvider):
     """Google Business Profile data as a queryable database, not a scrape.
 
@@ -268,7 +311,7 @@ class DataForSEOListings(DiscoveryProvider):
     free_tier = "$1 signup credit; $50 minimum deposit to go live"
     signup_url = "https://app.dataforseo.com/api-access"
     env_keys = ("dataforseo_login", "dataforseo_password")
-    caveat = "No email addresses — Harvey resolves those in a later stage."
+    caveat = "No email addresses — Siveron resolves those in a later stage."
 
     TASK_COST = 0.012
     ITEM_COST = 0.00036
@@ -478,7 +521,7 @@ class OpenStreetMap(DiscoveryProvider):
     # that fails half the time is not usable as a default.
     ENDPOINTS = (
         "https://overpass-api.de/api/interpreter",
-        "https://overpass.kumi.systems/api/interpreter",
+        # Private.coffee is the successor to kumi.systems, not a third mirror.
         "https://overpass.private.coffee/api/interpreter",
     )
     # Overpass etiquette for a shipped tool: modest volume, no parallelism.
@@ -487,16 +530,53 @@ class OpenStreetMap(DiscoveryProvider):
 
     # A friendly term maps to the OSM tags that actually carry those businesses.
     TAG_MAP = {
+        # Specific German dental terms must precede the substring "Arztpraxis".
+        "zahnarzt": ['amenity=dentist'],
+        # OSM uses amenity=doctors for practices and healthcare=doctor for
+        # doctor facilities. Specialty is read separately when mapped.
+        "arztpraxis": ['amenity=doctors', 'healthcare=doctor'],
+        "arztpraxen": ['amenity=doctors', 'healthcare=doctor'],
+        "hausarztpraxis": ['amenity=doctors', 'healthcare=doctor'],
+        "hausarztpraxen": ['amenity=doctors', 'healthcare=doctor'],
+        "hausarzt": ['amenity=doctors', 'healthcare=doctor'],
+        "allgemeinmedizin": ['amenity=doctors', 'healthcare=doctor'],
+        "ärzte": ['amenity=doctors', 'healthcare=doctor'],
+        "general practitioner": ['amenity=doctors', 'healthcare=doctor'],
+        "family doctor": ['amenity=doctors', 'healthcare=doctor'],
+        "family practice": ['amenity=doctors', 'healthcare=doctor'],
+        "primary care physician": ['amenity=doctors', 'healthcare=doctor'],
+        "medical practice": ['amenity=doctors', 'healthcare=doctor'],
+        "general practice": ['amenity=doctors', 'healthcare=doctor'],
+        "doctor practice": ['amenity=doctors', 'healthcare=doctor'],
+        "doctor's office": ['amenity=doctors', 'healthcare=doctor'],
+        "doctors": ['amenity=doctors', 'healthcare=doctor'],
+        "dachdecker": ['craft=roofer', 'shop=roofing'],
         "roof": ['craft=roofer', 'shop=roofing'],
+        "klempner": ['craft=plumber'],
         "plumb": ['craft=plumber'],
+        "heizungsbauer": ['craft=hvac'],
         "hvac": ['craft=hvac'],
+        "elektriker": ['craft=electrician'],
         "electric": ['craft=electrician'],
         "dentist": ['amenity=dentist'],
+        "rechtsanwalt": ['office=lawyer'],
+        "anwalt": ['office=lawyer'],
         "lawyer": ['office=lawyer'],
         "attorney": ['office=lawyer'],
         "contractor": ['craft=builder', 'office=construction_company'],
+        "bauunternehmen": ['craft=builder', 'office=construction_company'],
+        "landschaftsgärtner": ['craft=gardener', 'shop=garden_centre'],
         "landscap": ['craft=gardener', 'shop=garden_centre'],
     }
+    SUGGESTED_TERMS = (
+        "Arztpraxis", "Hausarztpraxis", "Allgemeinmedizin", "doctor practice",
+        "general practitioner", "family doctor", "family practice",
+        "Dachdecker", "roofer", "Klempner", "plumber", "Heizungsbauer", "HVAC",
+        "Elektriker", "electrician", "Zahnarzt", "dentist", "Rechtsanwalt",
+        "lawyer", "Bauunternehmen", "contractor", "Landschaftsgärtner", "landscaper",
+        "Parkplatzbetreiber", "Parkhausbetreiber", "Parkraumbewirtschaftung",
+        "Parkraummanagement", "Parkplatzmanagement", "Parkservice", "Parkplatz", "Parkhaus",
+    )
 
     def _tags(self, term: str) -> list[str]:
         """The OSM tags that actually carry this kind of business, or none.
@@ -508,11 +588,44 @@ class OpenStreetMap(DiscoveryProvider):
         database with plausible-looking junk is far worse than returning
         nothing.
         """
-        low = term.lower()
+        low = term.lower().strip()
+        if parking_intent(term) is not None:
+            return ['amenity=parking']
+        if low in ("arzt", "doctor", "physician"):
+            return ['amenity=doctors', 'healthcare=doctor']
         for needle, tags in self.TAG_MAP.items():
             if needle in low:
                 return tags
         return []
+
+    def suggest_terms(self, term: str) -> list[str]:
+        """Suggest supported categories for typos without rewriting the search."""
+        import difflib
+        import unicodedata
+
+        def normalized(text):
+            return ''.join(c for c in unicodedata.normalize('NFD', text.casefold())
+                           if not unicodedata.combining(c))
+
+        query = normalized(term)
+        if not query or len(query) > 40:
+            return []
+        choices = {normalized(value): value for value in self.SUGGESTED_TERMS}
+        prefixes = [value for key, value in choices.items() if query in key]
+        close = [choices[key] for key in difflib.get_close_matches(
+            query, choices, n=3, cutoff=0.55)]
+        return list(dict.fromkeys(prefixes + close))[:3]
+
+    @staticmethod
+    def _practice_category(tags: dict) -> str:
+        """Report mapped specialty honestly; absent OSM specialty is unknown."""
+        speciality = (tags.get("healthcare:speciality") or "").strip()
+        if not speciality:
+            return "Doctor practice — specialty unknown"
+        normalized = speciality.lower().replace("_", " ").replace("-", " ")
+        if any(x in normalized for x in ("general", "general practice", "allgemeinmedizin")):
+            return f"General practice ({speciality})"
+        return f"Doctor practice ({speciality})"
 
     async def fetch(self, client, env, query):
         if not query.coordinate:
@@ -527,9 +640,18 @@ class OpenStreetMap(DiscoveryProvider):
                 f"listings or SERP provider for this one.")
         lat, lng, radius_km = (query.coordinate.split(",") + ["", "", ""])[:3]
         radius_m = int(float(radius_km or 25) * 1000)
+        parking = parking_intent(query.term)
+        parking_filters = ''
+        if parking is not None:
+            if parking.operators:
+                parking_filters += '[operator]'
+            if parking.garages:
+                parking_filters += '[parking~"^(multi-storey|underground)$"]'
         clauses = "".join(
-            f'node[{tag.split("=")[0]}={tag.split("=")[1]}](around:{radius_m},{lat},{lng});'
-            f'way[{tag.split("=")[0]}={tag.split("=")[1]}](around:{radius_m},{lat},{lng});'
+            f'node[{tag.split("=")[0]}={tag.split("=")[1]}]{parking_filters}(around:{radius_m},{lat},{lng});'
+            f'way[{tag.split("=")[0]}={tag.split("=")[1]}]{parking_filters}(around:{radius_m},{lat},{lng});'
+            + (f'relation[{tag.split("=")[0]}={tag.split("=")[1]}]{parking_filters}(around:{radius_m},{lat},{lng});'
+               if parking is not None else '')
             for tag in tags
         )
         body = f"[out:json][timeout:40];({clauses});out center {query.limit};"
@@ -537,34 +659,59 @@ class OpenStreetMap(DiscoveryProvider):
         # Overpass is a free volunteer service and 429s/504s readily under
         # load. Walk the mirrors, then RAISE: returning [] would make a
         # throttled run look exactly like a market with no businesses in it.
-        headers = {"User-Agent": "Harvey/0.1 (open-source sales agent; "
+        headers = {"User-Agent": "Siveron/0.1 (open-source sales agent; "
                                  "github.com/ethanplusai/harvey)"}
         r = None
-        for i, endpoint in enumerate(self.ENDPOINTS):
+        preferred = getattr(self, "_preferred_endpoint", "")
+        endpoints = list(self.ENDPOINTS)
+        if preferred in endpoints:
+            endpoints.remove(preferred)
+            endpoints.insert(0, preferred)
+        for i, endpoint in enumerate(endpoints):
             if i:
                 await asyncio.sleep(self.BACKOFF)
             try:
-                r = await client.post(endpoint, content=body.encode(),
-                                      headers=headers)
-            except httpx.HTTPError as e:
-                logger.warning("osm: %s unreachable (%s)", endpoint, e)
+                r = await client.post(endpoint, content=body.encode(), headers=headers)
+            except httpx.HTTPError:
+                logger.warning("osm: %s unreachable; trying a backup", endpoint)
                 continue
-            if r.status_code not in (429, 504):
-                break
-            logger.warning("osm: %s is throttling (%s) — trying the next mirror",
-                           endpoint, r.status_code)
+            if r.status_code in (429, 500, 502, 503, 504):
+                logger.warning("osm: %s returned %s; trying a backup", endpoint, r.status_code)
+                continue
+            r.raise_for_status()  # Invalid queries and auth failures are not retried.
+            try:
+                payload = r.json()
+                if not isinstance(payload, dict) or payload.get("remark"):
+                    continue
+            except ValueError:
+                continue
+            self._preferred_endpoint = endpoint
+            break
         else:
             raise RuntimeError(
-                "Every public Overpass mirror is throttling right now. This is "
-                "free volunteer infrastructure — wait a few minutes and re-run, "
-                "or use a paid provider for bulk work.")
-        if r is None:
-            raise RuntimeError("Could not reach any Overpass mirror.")
-        r.raise_for_status()
+                "Overpass is temporarily unavailable. All backup servers failed. Please try again later.")
 
+        self.last_result_count = len(payload.get('elements') or [])
         out = []
-        for el in r.json().get("elements") or []:
+        for el in payload.get("elements") or []:
             tags = el.get("tags") or {}
+            if parking is not None and parking.garages and tags.get('parking') not in ('multi-storey', 'underground'):
+                continue
+            if parking is not None and parking.operators:
+                operator = parking_operator(tags)
+                if not operator:
+                    continue
+                site = tags.get('operator:website') or ''
+                out.append(Business(
+                    name=operator, website=site, domain=normalize_domain(site),
+                    phone=tags.get('operator:phone') or '',
+                    location=query.location, category='Parking operator',
+                    external_id=f"osm:{el.get('type')}/{el.get('id')}:operator",
+                    source_url=f"https://www.openstreetmap.org/{el.get('type')}/{el.get('id')}",
+                    provider=self.key, public_email=tags.get('operator:email') or '',
+                    has_website=True if site else None,
+                ))
+                continue
             name = tags.get("name") or ""
             if not name:
                 continue
@@ -579,18 +726,175 @@ class OpenStreetMap(DiscoveryProvider):
                 address=" ".join(x for x in (tags.get("addr:housenumber"),
                                              tags.get("addr:street")) if x),
                 location=city or query.location,
-                category=tags.get("craft") or tags.get("shop") or tags.get("office") or "",
+            category=(self._practice_category(tags)
+                      if (tags.get("amenity") == "doctors" or
+                          tags.get("healthcare") == "doctor")
+                      else tags.get("craft") or tags.get("shop") or tags.get("office") or tags.get('amenity') or ""),
                 has_website=bool(site),
                 external_id=f"osm:{el.get('type')}/{el.get('id')}",
                 source_url=f"https://www.openstreetmap.org/{el.get('type')}/{el.get('id')}",
                 provider=self.key,
+                public_email=tags.get('email') or tags.get('contact:email') or '',
             ))
         return out
 
 
+
+async def _provider_json(client, url, params, label):
+    """Never expose key-bearing request URLs or response bodies in errors."""
+    try:
+        response = await client.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError(f"{label}: HTTP {exc.response.status_code}. Please try again later.") from None
+    except (httpx.HTTPError, ValueError):
+        raise RuntimeError(f"{label}: service unavailable or invalid response.") from None
+    if not isinstance(data, dict) or data.get("error"):
+        raise RuntimeError(f"{label}: request rejected. Check your key and account quota.")
+    return data
+
+
+class Geoapify(DiscoveryProvider):
+    key = "geoapify"
+    label = "Geoapify Places"
+    kind = "listings"
+    blurb = "Search local places using OSM data through Geoapify. Not an independent business directory."
+    cost_note = "Free-tier mode only; up to 3,000 local credits per UTC day"
+    free_tier = "3,000 credits/day; 1 credit per 20 requested places"
+    signup_url = "https://myprojects.geoapify.com/"
+    env_keys = ("geoapify_api_key",)
+    caveat = "Local usage only: requests from other apps are not counted. Attribution to Geoapify and OpenStreetMap is required."
+    attribution = "Powered by Geoapify · © OpenStreetMap contributors (ODbL)"
+    attribution_url = "https://www.geoapify.com/"
+
+    def category_for(self, term):
+        parking = parking_intent(term)
+        if parking is not None:
+            return 'parking.cars.multistorey,parking.cars.underground' if parking.garages else 'parking.cars'
+        tags = OpenStreetMap()._tags(term)
+        if 'amenity=doctors' in tags:
+            if any(x in term.lower() for x in ('hausarzt', 'allgemeinmedizin', 'general', 'family', 'primary care')):
+                return 'healthcare.clinic_or_praxis.general'
+            return 'healthcare.clinic_or_praxis'
+        return next((category for tag, category in {
+            'amenity=dentist': 'healthcare.dentist',
+            'craft=electrician': 'service.electrician',
+            'office=lawyer': 'office.lawyer',
+        }.items() if tag in tags), '')
+
+    def quota_units(self, query):
+        return max(1, (min(max(1, query.limit), 500) + 19) // 20)
+
+    async def fetch(self, client, env, query):
+        category = self.category_for(query.term)
+        if not category:
+            raise RuntimeError("Geoapify has no supported category for this term. Choose OSM or a web search source.")
+        if not query.coordinate:
+            raise RuntimeError("Geoapify needs a resolved location. Choose a city or configure coordinates.")
+        lat, lon, radius = query.coordinate.split(',')
+        data = await _provider_json(client, 'https://api.geoapify.com/v2/places', {
+            'apiKey': env['geoapify_api_key'], 'categories': category,
+            'filter': f'circle:{lon},{lat},{int(float(radius) * 1000)}',
+            'limit': min(max(1, query.limit), 500), 'lang': 'de',
+        }, self.label)
+        out = []
+        parking = parking_intent(query.term)
+        for feature in data.get('features') or []:
+            props = feature.get('properties') or {}
+            raw = (props.get('datasource') or {}).get('raw') or {}
+            contact = props.get('contact') or {}
+            if parking is not None and parking.operators:
+                operator = parking_operator(raw)
+                if not operator:
+                    continue
+                website = raw.get('operator:website') or ''
+                place_id = props.get('place_id')
+                # Without a stable facility ID or operator domain the evidence
+                # cannot be persisted safely by the existing entity resolver.
+                if not place_id and not normalize_domain(website):
+                    continue
+                out.append(Business(
+                    name=operator, website=website, domain=normalize_domain(website),
+                    phone=raw.get('operator:phone') or '', location=query.location,
+                    category='Parking operator', has_website=True if website else None, provider=self.key,
+                    public_email=raw.get('operator:email') or '',
+                    external_id=f'geoapify:{place_id}:operator' if place_id else '',
+                    source_url='https://www.geoapify.com/places-api/',
+                ))
+                continue
+            name = props.get('name') or raw.get('name') or ''
+            if not name:
+                continue
+            website = contact.get('website') or props.get('website') or raw.get('website') or raw.get('contact:website') or ''
+            categories = props.get('categories') or []
+            medical = category.startswith('healthcare.clinic_or_praxis')
+            speciality = ('General practice (general)' if 'healthcare.clinic_or_praxis.general' in categories
+                          else OpenStreetMap._practice_category(raw))
+            out.append(Business(
+                name=name, website=website, domain=normalize_domain(website),
+                phone=contact.get('phone') or raw.get('phone') or raw.get('contact:phone') or '',
+                address=props.get('formatted') or '', location=props.get('city') or query.location,
+                category=speciality if medical else ', '.join(categories),
+                has_website=bool(website), provider=self.key,
+                public_email=contact.get('email') or raw.get('email') or raw.get('contact:email') or '',
+                external_id='geoapify:' + props['place_id'] if props.get('place_id') else '',
+                source_url='https://www.geoapify.com/places-api/',
+            ))
+        return out
+
+
+class SerpApi(DiscoveryProvider):
+    key = "serpapi"
+    label = "SerpApi Web Search"
+    kind = "serp"
+    blurb = "Find business websites with Google search, including businesses missing from OSM."
+    cost_note = "Free-tier mode only; maximum 250 local searches per UTC month"
+    free_tier = "250 searches/month on the Free plan; each results page uses one search"
+    signup_url = "https://serpapi.com/users/sign_up"
+    env_keys = ("serpapi_api_key",)
+    caveat = "A Free account is required. Siveron checks the account before searching and never switches to a paid plan."
+
+    def quota_units(self, query):
+        return max(1, (min(max(1, query.depth), 100) + 9) // 10)
+
+    async def fetch(self, client, env, query):
+        key = env['serpapi_api_key']
+        account = await _provider_json(client, 'https://serpapi.com/account.json', {'api_key': key}, self.label)
+        price = account.get('plan_monthly_price')
+        allowance = account.get('searches_per_month')
+        remaining = account.get('plan_searches_left')
+        if (price is None or float(price) != 0 or allowance is None or
+                not 0 < int(allowance) <= 250 or remaining is None):
+            raise RuntimeError("SerpApi requires a verified Free account. Paid or unknown plans are blocked.")
+        if int(remaining) < self.quota_units(query):
+            raise RuntimeError("SerpApi free account quota is exhausted. Please wait for renewal.")
+        out = []
+        for page in range(self.quota_units(query)):
+            data = await _provider_json(client, 'https://serpapi.com/search.json', {
+                'api_key': key, 'engine': 'google', 'q': query.keyword(),
+                'gl': 'de', 'hl': 'de', 'start': page * 10,
+            }, self.label)
+            organic = data.get('organic_results') or []
+            for item in organic:
+                website = item.get('link') or ''
+                domain = normalize_domain(website)
+                if not domain:
+                    continue
+                out.append(Business(name=item.get('title') or domain,
+                    domain=domain, website=website, location=query.location,
+                    rank=page * 10 + int(item.get('position') or 1),
+                    has_website=True, source_url=website, provider=self.key))
+            if not organic or len(out) >= query.limit:
+                break
+        return out[:query.limit]
+
 PROVIDERS: dict[str, DiscoveryProvider] = {
     p.key: p for p in (
         OpenStreetMap(),
+        GoogleMaps(),
+        Geoapify(),
+        SerpApi(),
         DataForSEOListings(),
         DataForSEOSerp(),
         Serper(),
@@ -643,6 +947,8 @@ class DiscoveryReport:
     run_id: str = ""
     errors: list[str] = field(default_factory=list)
     stopped: str = ""
+    result_limits: list[dict] = field(default_factory=list)
+    company_ids: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {
@@ -654,12 +960,13 @@ class DiscoveryReport:
             "known_companies": self.known_companies,
             "observations": self.observations,
             "run_id": self.run_id, "errors": self.errors,
-            "stopped": self.stopped,
+            "stopped": self.stopped, "result_limits": self.result_limits, "company_ids": self.company_ids,
         }
 
 
 def build_queries(config, cities: list[str] | None = None,
-                  depth: int = 30, limit: int = 100) -> list[DiscoveryQuery]:
+                  depth: int = 30, limit: int = 100,
+                  terms: list[str] | None = None) -> list[DiscoveryQuery]:
     """Turn the configured ICP into a concrete query list.
 
     One query per (industry x city). Coordinates come from
@@ -667,7 +974,10 @@ def build_queries(config, cities: list[str] | None = None,
     radius, not a place name.
     """
     icp = config.icp
-    terms = list(icp.industries) or [config.product.name]
+    configured_terms = getattr(icp, "discovery_terms", []) or []
+    if terms is None:
+        terms = configured_terms or list(icp.industries) or [config.product.name]
+    terms = [term.strip() for term in terms if term and term.strip()]
     places = cities if cities is not None else list(icp.geography) or [""]
     coords = getattr(icp, "geo_coordinates", {}) or {}
 
@@ -692,6 +1002,8 @@ async def run_discovery(
     queries: list[DiscoveryQuery] | None = None,
     max_spend: float = 1.0,
     dry_run: bool = False,
+    on_progress=None,
+    radius_km=None,
 ) -> DiscoveryReport:
     """Discover businesses and record what was learned about them.
 
@@ -706,9 +1018,13 @@ async def run_discovery(
     if provider is None:
         raise ValueError(f"unknown discovery provider: {provider_key!r}")
 
-    queries = queries or build_queries(config)
+    queries = build_queries(config) if queries is None else queries
     if provider.kind == "listings":
-        queries = await resolve_coordinates(state, queries)
+        queries = await resolve_coordinates(state, queries, **(
+            {'on_progress': on_progress, 'radius_km_override': radius_km} if on_progress or radius_km else {}))
+    if provider_key == 'google_maps':
+        from harvey.collectors.google_maps import plan
+        queries = plan(queries)
     report = DiscoveryReport(provider=provider_key, queries=len(queries))
     report.estimated_cost = provider.estimate(queries)
 
@@ -745,6 +1061,8 @@ async def run_discovery(
     )
 
     seen: set[str] = set()
+    if on_progress:
+        await on_progress({'stage': 'searching', 'total': len(queries), 'completed': 0, 'current': ''})
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True) as client:
             for i, query in enumerate(queries):
@@ -758,10 +1076,25 @@ async def run_discovery(
                     break
                 if i and provider.key == "osm":
                     await asyncio.sleep(OpenStreetMap.MIN_INTERVAL)
+                elif i and provider.key == "geoapify":
+                    await asyncio.sleep(0.25)  # Below the Free plan's 5 requests/s.
 
+                if on_progress:
+                    await on_progress({'current': query.keyword()})
                 try:
+                    from harvey.collectors.discovery_quota import LIMITS, reserve_quota
+                    if provider.key in LIMITS and not await reserve_quota(state, provider.key, provider.quota_units(query)):
+                        report.stopped = "free quota exhausted"
+                        report.errors.append("Free quota exhausted. No paid search was started.")
+                        break
                     provider.last_cost = 0.0
-                    found = await provider.fetch(client, env, query)
+                    provider.last_result_count = None
+                    if provider_key == 'google_maps':
+                        from harvey.collectors.google_maps import fetch
+                        async with asyncio.timeout(900):
+                            found = await fetch(query, state, on_progress)
+                    else:
+                        found = await provider.fetch(client, env, query)
                     report.actual_cost += provider.last_cost
                 except Exception as e:
                     # A failure is an observation about the run, not a reason
@@ -769,8 +1102,21 @@ async def run_discovery(
                     logger.warning("discover: %s failed on %r: %s",
                                    provider_key, query.keyword(), e)
                     report.errors.append(f"{query.keyword()}: {e}")
+                    if provider_key == 'google_maps':
+                        # Preserve checkpoints on interruption; never continue
+                        # hammering later sections after a browser/block error.
+                        report.stopped = "interrupted; resume available"
+                        break
+                    if on_progress:
+                        await on_progress({'completed': i + 1, 'errors': len(report.errors)})
                     continue
 
+                raw_count = getattr(provider, 'last_result_count', None)
+                report.result_limits.append({
+                    'query': query.keyword(), 'limit': query.limit,
+                    'raw_count': raw_count, 'usable_count': len(found),
+                    'reached': raw_count >= query.limit if raw_count is not None else None,
+                })
                 report.found += len(found)
                 batch = []
                 for biz in found:
@@ -783,6 +1129,8 @@ async def run_discovery(
                     seen.add(ident)
 
                     company_id, is_new = await _upsert(state, biz, query)
+                    if company_id not in report.company_ids:
+                        report.company_ids.append(company_id)
                     if is_new:
                         report.new_companies += 1
                     else:
@@ -795,6 +1143,11 @@ async def run_discovery(
                 if batch:
                     report.observations += await state.add_observations(
                         batch, run_id=report.run_id)
+
+                if on_progress:
+                    await on_progress({'completed': i + 1, 'new_companies': report.new_companies,
+                                       'known_companies': report.known_companies, 'errors': len(report.errors),
+                                       'result_limits': list(report.result_limits)})
 
         await state.finish_run(report.run_id, status="completed",
                                records=report.new_companies + report.known_companies,
@@ -812,12 +1165,16 @@ async def _upsert(state, biz: Business, query: DiscoveryQuery) -> tuple[str, boo
     """Record the business, returning (id, was_new)."""
     # Look before inserting, so "already knew this one" is a fact we report
     # rather than something inferred from an insert's return value.
+    if biz.provider == 'google_maps':
+        return await state.upsert_maps_company(biz, query)
     existing = None
     if biz.domain:
         existing = await state.get_company_by_domain(biz.domain)
     if existing is None and biz.external_id:
         existing = await state.get_company_by_external_id(biz.external_id)
     if existing:
+        if biz.public_email:
+            await state.save_public_company_emails(existing.id, [biz.public_email], biz.source_url)
         return existing.id, False
 
     company = Company(
@@ -831,7 +1188,10 @@ async def _upsert(state, biz: Business, query: DiscoveryQuery) -> tuple[str, boo
         source_url=biz.source_url,
         external_id=biz.external_id,
     )
-    return await state.add_company(company), True
+    company_id = await state.add_company(company)
+    if biz.public_email:
+        await state.save_public_company_emails(company_id, [biz.public_email], biz.source_url)
+    return company_id, True
 
 
 def _observations(biz: Business, company_id: str, confirmed: set[str],
@@ -873,6 +1233,8 @@ def provider_menu(env: dict | None = None) -> list[dict]:
             "env_keys": [k.upper() for k in p.env_keys],
             "configured": p.configured(env),
             "needs_key": bool(p.env_keys),
+            "attribution": getattr(p, "attribution", ""),
+            "attribution_url": getattr(p, "attribution_url", ""),
         }
         for p in PROVIDERS.values()
     ]

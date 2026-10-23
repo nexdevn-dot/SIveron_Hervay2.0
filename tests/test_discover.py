@@ -506,7 +506,7 @@ async def test_overpass_throttling_is_an_error_not_an_empty_market(monkeypatch):
         return httpx.Response(504, text="")
 
     provider = D.OpenStreetMap()
-    with pytest.raises(RuntimeError, match="throttling"):
+    with pytest.raises(RuntimeError, match="temporarily unavailable"):
         async with _client(handler) as client:
             await provider.fetch(client, {}, D.DiscoveryQuery(
                 term="roofer", coordinate="39.7,-104.9,40"))
@@ -563,7 +563,7 @@ async def test_geocode_is_cached_so_a_city_is_looked_up_once(state):
 
     def handler(request):
         calls["n"] += 1
-        assert "Harvey" in request.headers["user-agent"]
+        assert "Siveron" in request.headers["user-agent"]
         return httpx.Response(200, json=[{"lat": "39.7392", "lon": "-104.9903"}])
 
     async with _geo_client(handler) as client:
@@ -643,6 +643,59 @@ async def test_osm_maps_the_trades_it_does_know():
     assert provider._tags("B2B SaaS") == []
 
 
+def test_osm_maps_doctor_practice_terms_and_keeps_broad_sme_unsupported():
+    provider = D.OpenStreetMap()
+    for term in ("Arztpraxis", "Hausarztpraxis", "Allgemeinmedizin",
+                 "doctor practice", "general practitioner", "family doctor",
+                 "family practice", "primary care physician"):
+        assert provider._tags(term) == ["amenity=doctors", "healthcare=doctor"]
+    assert all(provider._tags(term) for term in provider.SUGGESTED_TERMS)
+    assert provider._tags("Branchenübergreifende kleine und mittlere Unternehmen (KMU)") == []
+    assert provider._practice_category({}) == "Doctor practice — specialty unknown"
+    assert provider._practice_category({"healthcare:speciality": "general"}) == "General practice (general)"
+
+
+def test_osm_typos_offer_supported_replacements_without_changing_the_query():
+    provider = D.OpenStreetMap()
+    assert provider._tags("Arztpraxiss") == ['amenity=doctors', 'healthcare=doctor']
+    assert provider._tags("Elektrickr") == []
+    suggestions = provider.suggest_terms("Elektrickr")
+    assert "Elektriker" in suggestions
+    assert all(provider._tags(term) for term in suggestions)
+    # A German dentist must not be mistaken for a general doctor ("Arzt").
+    assert provider._tags("Zahnarztpraxis") == ['amenity=dentist']
+
+
+@pytest.mark.asyncio
+async def test_osm_doctor_query_uses_documented_tags_and_marks_missing_specialty():
+    provider = D.OpenStreetMap()
+    seen = []
+
+    def respond(request):
+        seen.append(request.content.decode())
+        return httpx.Response(200, json={"elements": [{"type": "node", "id": 9,
+            "lat": 51.9, "lon": 8.4, "tags": {"name": "Praxis Beispiel",
+            "amenity": "doctors"}}]})
+
+    async with _client(respond) as client:
+        found = await provider.fetch(client, {}, D.DiscoveryQuery(
+            term="Arztpraxis", location="Rietberg", coordinate="51.9,8.4,20"))
+    assert "node[amenity=doctors]" in seen[0]
+    assert "way[amenity=doctors]" in seen[0]
+    assert "node[healthcare=doctor]" in seen[0]
+    assert "way[healthcare=doctor]" in seen[0]
+    assert found[0].category == "Doctor practice — specialty unknown"
+
+
+def test_build_queries_separates_concrete_terms_and_preserves_legacy_fallback(config):
+    config.icp.industries = ["Descriptive SME audience"]
+    config.icp.discovery_terms = ["Arztpraxis"]
+    queries = D.build_queries(config, cities=["Rietberg"])
+    assert [q.keyword() for q in queries] == ["Arztpraxis Rietberg"]
+    config.icp.discovery_terms = []
+    assert D.build_queries(config, cities=["Rietberg"])[0].term == "Descriptive SME audience"
+
+
 @pytest.mark.asyncio
 async def test_an_unmappable_term_is_reported_not_silently_skipped(
         state, config, register, monkeypatch):
@@ -658,3 +711,21 @@ async def test_an_unmappable_term_is_reported_not_silently_skipped(
                                                      coordinate="1,2,40")])
     assert report.found == 0
     assert report.errors and "no category" in report.errors[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('raw_count,limit,reached',[(2,2,True),(2,100,False)])
+async def test_osm_limit_tracks_raw_elements_before_nameless_filtering(state,config,monkeypatch,raw_count,limit,reached):
+    provider=D.OpenStreetMap()
+    monkeypatch.setitem(D.PROVIDERS,'osm',provider)
+    original=httpx.AsyncClient
+    payload={'elements':[{'type':'node','id':1,'tags':{'name':'Example Builder'}},{'type':'node','id':2,'tags':{}}]}
+    monkeypatch.setattr(D.httpx,'AsyncClient',lambda **kw: original(transport=httpx.MockTransport(lambda request:httpx.Response(200,json=payload)),**kw))
+    events=[]
+    async def progress(event): events.append(event)
+    report=await D.run_discovery(state,config,'osm',[D.DiscoveryQuery(term='Bauunternehmen',coordinate='51,8,40',limit=limit)],on_progress=progress)
+    assert report.found==1
+    result=report.as_dict()['result_limits'][0]
+    assert result['raw_count']==raw_count and result['usable_count']==1
+    assert result['limit']==limit and result['reached'] is reached
+    assert any(event.get('result_limits')==report.result_limits for event in events)

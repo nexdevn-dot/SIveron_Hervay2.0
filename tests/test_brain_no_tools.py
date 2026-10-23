@@ -2,7 +2,7 @@
 
 Prompts carry untrusted text (prospect replies, scraped pages). If Claude had
 tools, an instruction hidden in that text could run commands or reach the
-operator's connectors. Harvey only needs text back, so it gets none.
+operator's connectors. Siveron only needs text back, so it gets none.
 """
 
 import asyncio

@@ -2,7 +2,7 @@
 
 Usage: python fake_codex.py <scenario> <log_path> <codex args...>
 
-Speaks just enough of the app-server stdio protocol for Harvey's adapter and
+Speaks just enough of the app-server stdio protocol for Siveron's adapter and
 logs every request it receives (method + params) to <log_path>, one JSON
 object per line, so tests can assert exactly what was — and wasn't — sent.
 """
@@ -124,7 +124,7 @@ def effective_config():
 
 
 def answer_for(prompt):
-    """Scenario "smart": a plausible answer per Harvey prompt type, so whole
+    """Scenario "smart": a plausible answer per Siveron prompt type, so whole
     agent flows can run through the real adapter."""
     low = prompt.lower()
     if "respond with exactly: harvey_ready" in low:

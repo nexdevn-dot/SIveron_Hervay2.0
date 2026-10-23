@@ -60,7 +60,7 @@ class FakeProvider(MailProvider):
 
 class Cfg:
     class persona:
-        name = "Harvey"; email = "harvey@x.co"; company = "X"; role = "BD"; tone = "direct"
+        name = "Siveron"; email = "harvey@x.co"; company = "X"; role = "BD"; tone = "direct"
 
     class product:
         name = "P"; description = "d"; pricing = "$"; key_benefits = ["b"]
@@ -349,3 +349,29 @@ async def test_inbound_dedup(state):
     await handler._run_native()   # same message again → ignored via dedup
     second = await state.get_conversations_by_status("closed")
     assert len(first) == len(second) == 1
+
+
+@pytest.mark.asyncio
+async def test_manual_rich_outbox_sends_exact_approved_html_and_attachment(state):
+    from harvey.crm import save_campaign_draft, campaign_detail, prepare_campaign_review
+    pid=await seed_prospect(state)
+    aid='a'*32
+    async with state._connect() as db:
+        await db.execute('INSERT INTO campaign_attachments(id,filename,mime,size,content) VALUES (?,?,?,?,?)',(aid,'note.txt','text/plain',5,b'hello'))
+        await db.commit()
+    doc={'type':'doc','content':[{'type':'paragraph','content':[{'type':'text','text':'Hello {{first_name}}','marks':[{'type':'italic'}]}]}]}
+    result=await save_campaign_draft(state,{'name':'Rich','prospect_ids':[pid],'sequence':[{'subject':'Hello','body':'stale','body_doc':doc,'attachment_ids':[aid]}]})
+    detail=await campaign_detail(state,result['id'])
+    await prepare_campaign_review(state,result['id'],detail['revision'])
+    class RichProvider(FakeProvider):
+        async def send_email(self,*args,**kwargs):
+            self.html=kwargs.pop('html_body');self.files=kwargs.pop('attachments')
+            return await super().send_email(*args,**kwargs)
+    provider=RichProvider();sender=make_sender(state,provider)
+    await sender._drain_due()
+    assert provider.sent==[]
+    await state.approve_outbox()
+    await sender._drain_due()
+    assert provider.sent[0]['body']=='Hello Jane'
+    assert provider.html=='<p><em>Hello Jane</em></p>'
+    assert provider.files[0]['content']==b'hello' and provider.files[0]['filename']=='note.txt'

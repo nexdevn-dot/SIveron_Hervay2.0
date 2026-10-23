@@ -2,6 +2,8 @@
 
 from datetime import datetime, timezone
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -11,6 +13,11 @@ def _utcnow() -> datetime:
 
 
 class Prospect(BaseModel):
+    revision: int = 0
+    do_not_contact: bool = False
+    block_reason: str = ""
+    blocked_at: str = ""
+    contact_type: Literal["person", "company"] = "person"
     id: str = ""
     company_id: str = ""       # FK to companies table
     first_name: str = ""       # required for a valid contact
@@ -26,6 +33,7 @@ class Prospect(BaseModel):
     seniority: str = ""        # c_suite, vp, director, manager, individual
     department: str = ""
     source: str = ""           # how we found them
+    source_found_at: str = ""
     source_url: str = ""       # where we found the info
     status: str = "new"        # new/contacted/replied/meeting/closed/lost
     score: int = 0
@@ -49,8 +57,8 @@ class Prospect(BaseModel):
         return (v or "").strip()
 
     def full_name(self) -> str:
-        return f"{self.first_name} {self.last_name}".strip()
+        return self.company if self.contact_type == "company" else f"{self.first_name} {self.last_name}".strip()
 
     def is_valid(self) -> bool:
         """A contact must have at minimum a name and title."""
-        return bool(self.first_name and self.last_name and self.title)
+        return self.contact_type == "person" and bool(self.first_name and self.last_name and self.title)

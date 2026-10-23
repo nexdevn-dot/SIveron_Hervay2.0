@@ -1,4 +1,4 @@
-"""Harvey data models."""
+"""Siveron data models."""
 
 from harvey.models.campaign import Campaign, EmailStep
 from harvey.models.company import Company

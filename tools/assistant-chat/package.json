@@ -1,0 +1,1 @@
+{"name":"siveron-assistant-assets","private":true,"type":"module","scripts":{"build":"node build.mjs"},"dependencies":{"deep-chat":"2.5.1"}}

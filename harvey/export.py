@@ -2,7 +2,7 @@
 
 Produces a CSV that drops straight into Instantly, Smartlead, or any
 sequencer (email / first_name / last_name / company_name / personalization
-columns), plus Harvey's own quality columns (score, email_status, signals)
+columns), plus Siveron's own quality columns (score, email_status, signals)
 so a human can eyeball what they're getting.
 """
 
@@ -20,6 +20,7 @@ CSV_COLUMNS = [
     "email", "first_name", "last_name", "company_name", "title",
     "website", "linkedin_url", "industry", "personalization",
     "email_status", "score", "seniority", "source", "status", "created_at",
+    "contact_type", "source_url", "source_found_at", "do_not_contact", "block_reason",
 ]
 
 DEFAULT_EMAIL_STATUSES = ["verified", "risky"]
@@ -39,9 +40,10 @@ async def collect_prospects(
     """
     import aiosqlite
 
-    where = []
+    where = ["id NOT IN (SELECT prospect_id FROM contact_trash)"]
     params: list = []
     if not include_all:
+        where.append("do_not_contact=0 AND status != 'opted_out' AND NOT EXISTS (SELECT 1 FROM contact_suppressions s WHERE s.email=lower(prospects.email))")
         wanted = email_statuses if email_statuses is not None else DEFAULT_EMAIL_STATUSES
         if wanted:
             placeholders = ",".join("?" for _ in wanted)
@@ -68,6 +70,11 @@ async def collect_prospects(
     out = []
     for r in rows:
         out.append({
+            "do_not_contact": bool(r.get("do_not_contact",False)) or r.get("status")=="opted_out",
+            "block_reason": r.get("block_reason", ""),
+            "contact_type": r.get("contact_type", "person"),
+            "source_url": r.get("source_url", ""),
+            "source_found_at": r.get("source_found_at", ""),
             "email": r.get("email", ""),
             "first_name": r.get("first_name", ""),
             "last_name": r.get("last_name", ""),

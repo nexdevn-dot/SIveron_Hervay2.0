@@ -1,4 +1,4 @@
-"""Interactive setup wizard — walks you through everything Harvey needs."""
+"""Interactive setup wizard — walks you through everything Siveron needs."""
 
 import asyncio
 import getpass
@@ -23,8 +23,8 @@ CONFIG_FILE = PROJECT_ROOT / "harvey.yaml"
 
 
 def _print_harvey(message: str):
-    """Print a message as Harvey."""
-    print(f"\n  Harvey: {message}")
+    """Print a message as Siveron."""
+    print(f"\n  Siveron: {message}")
 
 
 def _print_step(step: int, total: int, title: str):
@@ -86,13 +86,14 @@ async def _test_claude(brain: Brain) -> bool:
     return "HARVEY_READY" in response
 
 
-def _ask_brain_config() -> BrainConfig:
-    """Ask which subscription Harvey thinks with. Claude is the default."""
+def _ask_brain_config(existing: BrainConfig | None = None) -> BrainConfig:
+    """Choose a subscription, preserving an explicitly supplied configuration."""
     _print_harvey("I think with an AI subscription you already pay for:")
-    print("    claude — your Claude plan, via Claude Code (default)")
+    print("    claude — your Claude plan, via Claude Code")
     print("    codex  — your ChatGPT plan, via the Codex CLI")
     while True:
-        provider = _ask("Which one? (claude/codex)", default="claude").lower()
+        provider = _ask("Which one? (claude/codex)",
+                        default=existing.provider if existing else "claude").lower()
         if provider == "codex":
             from harvey.codex import CodexError, require_supported_platform
             try:
@@ -104,16 +105,31 @@ def _ask_brain_config() -> BrainConfig:
             break
         print("    (type claude or codex)")
     if provider == "codex":
-        from harvey.codex import SUGGESTED_MODEL
-        print(f"    {SUGGESTED_MODEL} is the Codex model Harvey has verified as text-only")
-        print("    (no code-execution tools). Press Enter to use it, or type another.")
+        from harvey.codex import RESTRICTED_TEXT_MODELS, SUGGESTED_MODEL
+        suggested = (existing.model if existing and existing.provider == "codex"
+                     and existing.model else SUGGESTED_MODEL)
+        if existing and existing.codex_restricted_text and suggested == existing.model:
+            print(f"    {suggested} uses this checkout's verified restricted text mode.")
+            print("    Press Enter to preserve the existing model and isolation settings.")
+        else:
+            print(f"    {suggested} is the configured or suggested Codex model.")
+            print("    Press Enter to use it, or type another.")
     while True:
         if provider == "codex":
-            model = _ask("Model", default=SUGGESTED_MODEL, required=False)
+            model = _ask("Model", default=suggested, required=False)
         else:
             model = _ask("Model (leave blank for the default)", required=False)
         try:
-            return BrainConfig(provider=provider, model=model)
+            preserve = bool(existing and provider == existing.provider
+                            and model == existing.model)
+            return BrainConfig(
+                provider=provider, model=model,
+                reasoning_effort=existing.reasoning_effort if preserve else "",
+                codex_restricted_text=(
+                    existing.codex_restricted_text if preserve
+                    else provider == "codex" and model in RESTRICTED_TEXT_MODELS
+                ),
+            )
         except ValidationError:
             print("    (that doesn't look like a model name — try again or leave blank)")
 
@@ -143,12 +159,12 @@ class SetupWizard:
         print(f"""
 ╔══════════════════════════════════════════════════════════╗
 ║                                                          ║
-║   Harvey Setup Wizard                                    ║
+║   Siveron Setup Wizard                                    ║
 ║   Let's get you closing deals.                           ║
 ║                                                          ║
 ╚══════════════════════════════════════════════════════════╝""")
 
-        _print_harvey("Hey. I'm Harvey. Let's get me set up so I can start")
+        _print_harvey("Hey. I'm Siveron. Let's get me set up so I can start")
         _print_harvey("closing deals for you. I'll walk you through everything.")
         _print_harvey("This takes about 5 minutes.\n")
 
@@ -171,7 +187,7 @@ class SetupWizard:
         self._setup_cloudflare()
 
         # Step 5: Train on product
-        _print_step(5, total_steps, "Train Harvey on Your Product")
+        _print_step(5, total_steps, "Train Siveron on Your Product")
         await self._setup_product()
 
         # Step 6: Configure behavior
@@ -187,7 +203,12 @@ class SetupWizard:
 
     async def _check_prerequisites(self):
         """Pick the brain provider and verify its CLI is installed and working."""
-        self.brain_config = _ask_brain_config()
+        from harvey.config import ConfigError, load_brain_config
+        try:
+            existing = load_brain_config()
+        except ConfigError:
+            existing = None
+        self.brain_config = _ask_brain_config(existing)
         if self.brain_config.provider == "codex":
             await self._check_codex()
         else:
@@ -256,7 +277,7 @@ class SetupWizard:
             raise SystemExit(1)
 
         # A real (subscription, not API-billed) call through the same
-        # isolated runtime Harvey uses for every prompt.
+        # isolated runtime Siveron uses for every prompt.
         print("  Testing Codex (isolated, no tools)...", end=" ", flush=True)
         state = StateManager()
         await state.init_db()
@@ -365,7 +386,7 @@ class SetupWizard:
             self.env_vars["CLOUDFLARE_API_TOKEN"] = ""
 
     async def _setup_product(self):
-        """Train Harvey on the product — either via URL or manual entry."""
+        """Train Siveron on the product — either via URL or manual entry."""
         _print_harvey("Now the important part — I need to learn about what you're selling.")
         _print_harvey("I can either crawl your website and figure it out myself,")
         _print_harvey("or you can tell me the basics manually.\n")
@@ -457,7 +478,7 @@ class SetupWizard:
                 booking_url = _ask("Booking URL")
                 booking_method = "calendar_link"
             else:
-                print("\n  How should Harvey suggest meeting times?")
+                print("\n  How should Siveron suggest meeting times?")
                 print("    1. Suggest specific times ('How about Thursday at 2pm?')")
                 print("    2. Ask for their preference ('What does your calendar look like?')")
                 method_choice = _ask("Method (1/2)", default="1")
@@ -468,7 +489,7 @@ class SetupWizard:
 
         _print_harvey("What persona should I use for outreach?\n")
 
-        persona_name = _ask("My name (what prospects see)", default="Harvey")
+        persona_name = _ask("My name (what prospects see)", default="Siveron")
         persona_email = _ask("My email address")
         persona_role = _ask("My title/role", default="Business Development")
 
@@ -529,7 +550,7 @@ class SetupWizard:
         _print_harvey("Got it. I have everything I need about your product.")
 
     def _setup_behavior(self):
-        """Configure Harvey's operational behavior."""
+        """Configure Siveron's operational behavior."""
         _print_harvey("Last thing — a few settings for how I operate.\n")
 
         # Usage limit
@@ -676,7 +697,7 @@ class SetupWizard:
     - .env (your credentials)
     - harvey.yaml (your configuration)
 
-  To start Harvey:
+  To start Siveron:
     harvey run          (or: python -m harvey)
 
   To re-train on a different product:

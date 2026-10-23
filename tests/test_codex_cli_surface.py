@@ -1,4 +1,4 @@
-"""Opt-in check of Harvey's Codex lockdown against the REAL installed Codex CLI.
+"""Opt-in check of Siveron's Codex lockdown against the REAL installed Codex CLI.
 
 Run after installing or upgrading Codex:
 
@@ -10,8 +10,8 @@ No real credentials, no network, no inference. Two kinds of check:
   records exactly what the model would be given (tool list, instructions,
   input). Only the provider-identity and endpoint checks are relaxed so the
   mock can stand in for OpenAI; every other attestation runs unchanged.
-* Route: with Harvey's checks NOT relaxed, hostile endpoint settings point
-  Codex at a localhost "attacker" that records every request. Harvey must
+* Route: with Siveron's checks NOT relaxed, hostile endpoint settings point
+  Codex at a localhost "attacker" that records every request. Siveron must
   refuse before the (fake) login reaches it. A control run with the check
   disabled proves the attacker would otherwise receive the token.
 """
@@ -333,7 +333,7 @@ async def test_real_cli_hostile_route_never_receives_the_login(attacker, route, 
             await client.run("ping", timeout=60)
         else:
             await client.read_rate_limits(timeout=60)
-    # Refused by Harvey's attestation, or by Codex rejecting the config
+    # Refused by Siveron's attestation, or by Codex rejecting the config
     # outright (it refuses to let `openai` be redefined).
     assert err.value.kind in ("isolation", "protocol")
     assert attacker.requests == []
@@ -382,7 +382,7 @@ def _bundled_catalog(tmp_path) -> dict:
 @pytest.mark.asyncio
 async def test_real_cli_unlisted_toolless_model_only_runs_when_explicit(
         mock_codex, monkeypatch, tmp_path):
-    """A live catalog may stop *listing* a tool-less model. Harvey must not
+    """A live catalog may stop *listing* a tool-less model. Siveron must not
     pick it on its own, but must run it, with no tools, when it is named."""
     monkeypatch.setattr(hc, "DISABLED_FEATURES",
                         hc.DISABLED_FEATURES + ("enable_request_compression",))

@@ -12,6 +12,7 @@ Native flow:
 
 import asyncio
 import logging
+import json
 import random
 import re
 from datetime import date, datetime, timedelta, timezone
@@ -31,15 +32,15 @@ MAX_SENDS_PER_CYCLE = 8
 SEND_JITTER_SECONDS = (4, 15)
 
 # Prospect pipeline statuses that mean "stop emailing this person".
-STOP_STATUSES = {"replied", "opted_out", "lost", "meeting", "closed"}
+from harvey.delivery_readiness import STOP_STATUSES, assess_message, global_context
 
 KILL_SWITCH_KEY = "sending_paused"
 BOUNCE_COUNT_KEY = "bounce_count"
 
-EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
+from harvey.email_checks import EMAIL_RE, send_address_valid
 
-# Only prospects in these statuses may be added as leads. This guarantees
-# we never re-send to someone already contacted, replied, opted out, or lost.
+# Normal lifecycle states eligible for deployment. The legacy company_contact
+# state is handled by has_sendable_status; terminal states stay excluded.
 SENDABLE_STATUSES = {"new", "queued"}
 
 # Email confidence levels safe to send to. "verified" only by default;
@@ -47,6 +48,17 @@ SENDABLE_STATUSES = {"new", "queued"}
 # or "invalid" address — that bounces and burns the sending domain.
 SENDABLE_EMAIL_STATUSES = {"verified"}
 SENDABLE_EMAIL_STATUSES_WITH_RISKY = {"verified", "risky"}
+
+
+def has_sendable_status(prospect) -> bool:
+    """Keep the legacy company-contact status eligible without widening person states.
+
+    Contact type stays ``company`` as the lifecycle moves to queued/contacted.
+    Deliverability and suppression checks remain separate requirements.
+    """
+    return prospect.status in SENDABLE_STATUSES or (
+        prospect.contact_type == "company" and prospect.status == "company_contact"
+    )
 
 
 class Sender:
@@ -74,6 +86,9 @@ class Sender:
 
     async def run(self):
         """Deploy campaigns — natively through the outbox, or via Instantly."""
+        from harvey.crm import flush_remote_pauses
+        if isinstance(getattr(self.instantly, 'api_key', None), str) and self.instantly.api_key:
+            await flush_remote_pauses(self.state, self.instantly)
         if not self.config.channels.email.enabled:
             logger.info("Sender: Email channel disabled. Skipping.")
             return
@@ -102,12 +117,28 @@ class Sender:
             except Exception as e:
                 logger.error(f"Sender: Failed to deploy campaign {campaign.name}: {e}")
 
+    async def _blocked_campaign(self, campaign):
+        for pid in campaign.prospect_ids:
+            if await self.state.is_contact_suppressed(pid):
+                if campaign.instantly_campaign_id:
+                    async with self.state._connect() as db:
+                        await db.execute('INSERT OR IGNORE INTO campaign_pause_requests(campaign_id,remote_id) VALUES (?,?)', (campaign.id,campaign.instantly_campaign_id))
+                        await db.commit()
+                    from harvey.crm import flush_remote_pauses
+                    await flush_remote_pauses(self.state,self.instantly)
+                await self.state.update_campaign(campaign.id,status='paused')
+                return True
+        return False
+
     def _validate_sequence(self, campaign) -> bool:
         """Never deploy a broken or empty sequence."""
         if not campaign.sequence:
             logger.error(f"Sender: Campaign '{campaign.name}' has no email sequence. Marking failed.")
             return False
         for step in campaign.sequence:
+            if step.body_doc or step.attachment_ids:
+                logger.warning('Rich campaigns require the native SMTP/Gmail review workflow.')
+                return
             if not (step.subject or "").strip() or not (step.body or "").strip():
                 logger.error(
                     f"Sender: Campaign '{campaign.name}' step {step.step} has an empty "
@@ -123,9 +154,13 @@ class Sender:
 
     async def _deploy_campaign(self, campaign):
         """Deploy a single campaign to Instantly. Idempotent: safe to retry."""
+        if campaign.status == 'manual_draft' or await self._blocked_campaign(campaign):
+            return
         logger.info(f"Sender: Deploying campaign '{campaign.name}'...")
 
         # 0. Validate before touching the network
+        if campaign.status == 'manual_draft':
+            return
         if not self._validate_sequence(campaign):
             await self.state.update_campaign(campaign.id, status="failed")
             return
@@ -180,15 +215,15 @@ class Sender:
         skipped_unverified = 0
         for prospect_id in campaign.prospect_ids:
             prospect = await self.state.get_prospect(prospect_id)
-            if not prospect or not prospect.email:
+            if not prospect or not prospect.email or await self.state.is_contact_suppressed(prospect_id, prospect.email):
                 continue
             email = prospect.email.strip().lower()
-            if not EMAIL_RE.match(email):
+            if not send_address_valid(email):
                 logger.warning(f"Sender: Skipping invalid email '{prospect.email}'")
                 continue
             if email in seen_emails:
                 continue
-            if prospect.status not in SENDABLE_STATUSES:
+            if not has_sendable_status(prospect):
                 # Already contacted / replied / opted out — never double-send.
                 logger.debug(
                     f"Sender: Skipping {email} (status '{prospect.status}' is not sendable)."
@@ -225,7 +260,11 @@ class Sender:
                 logger.info(
                     f"Sender: Leads for '{campaign.name}' already staged. Retrying activation."
                 )
+                if await self._blocked_campaign(campaign):
+                    return
                 if await self.instantly.activate_campaign(campaign_id) is not None:
+                    if await self._blocked_campaign(campaign):
+                        return
                     await self.state.update_campaign(campaign.id, status="active")
                     logger.info(f"Sender: Campaign '{campaign.name}' activated on retry.")
                 return
@@ -257,6 +296,8 @@ class Sender:
             for p in prospects
         ]
 
+        if await self._blocked_campaign(campaign):
+            return
         result = await self.instantly.add_leads(campaign_id, leads)
         if result is None:
             logger.error(f"Sender: Failed to add leads to campaign {campaign_id}")
@@ -269,12 +310,17 @@ class Sender:
             await self.state.update_prospect_status(prospect.id, "contacted")
 
         # 4. Activate campaign
+        if await self._blocked_campaign(campaign):
+            return
         result = await self.instantly.activate_campaign(campaign_id)
         if result is None:
             logger.error(
                 f"Sender: Failed to activate campaign {campaign_id}. "
                 "Leads are staged; will retry activation next cycle."
             )
+            return
+
+        if await self._blocked_campaign(campaign):
             return
 
         # 5. Update our records
@@ -313,6 +359,15 @@ class Sender:
 
     # ── Native provider flow (Gmail / SMTP via the outbox) ──
 
+    async def send_approved_only(self):
+        """Drain existing approvals without staging campaigns or invoking AI."""
+        if not self.is_native or not self.config.channels.email.enabled:
+            return
+        if await self.state.get_setting(KILL_SWITCH_KEY):
+            logger.info('Sender: sending paused; approved messages wait.')
+            return
+        await self._drain_due()
+
     async def _run_native(self):
         """Stage new campaigns into the outbox, then drain what's due."""
         paused = await self.state.get_setting(KILL_SWITCH_KEY)
@@ -340,13 +395,14 @@ class Sender:
             "title": prospect.title,
             "personalization": prospect.personalization_notes,
         }
-        for key, value in replacements.items():
-            text = text.replace("{{" + key + "}}", value or "")
-            text = text.replace("{{ " + key + " }}", value or "")
-        return text.strip()
+        import re
+        return re.sub(r"\{\{\s*(first_name|last_name|company|title|personalization)\s*\}\}",
+                      lambda match: replacements[match.group(1)] or "", text).strip()
 
     async def _stage_campaign_native(self, campaign):
         """Render + schedule a draft campaign's emails into the outbox."""
+        if campaign.status == 'manual_draft':
+            return
         if not self._validate_sequence(campaign):
             await self.state.update_campaign(campaign.id, status="failed")
             return
@@ -368,12 +424,12 @@ class Sender:
 
         for prospect_id in campaign.prospect_ids:
             prospect = await self.state.get_prospect(prospect_id)
-            if not prospect or not prospect.email:
+            if not prospect or not prospect.email or await self.state.is_contact_suppressed(prospect_id, prospect.email):
                 continue
             email = prospect.email.strip().lower()
-            if not EMAIL_RE.match(email) or email in seen_emails:
+            if not send_address_valid(email) or email in seen_emails:
                 continue
-            if prospect.status not in SENDABLE_STATUSES:
+            if not has_sendable_status(prospect):
                 continue
             if (prospect.email_status or "guess") not in sendable_email:
                 skipped += 1
@@ -394,6 +450,7 @@ class Sender:
                     send_at=send_at.isoformat(),
                     status=initial_status,
                     provider=self.provider.name,
+                    delay_days=max(0, step.delay_days),
                 )
                 if item_id:
                     staged += 1
@@ -435,7 +492,7 @@ class Sender:
 
         now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         due = await self.state.get_outbox(
-            status="approved", due_before=now, limit=budget * 3
+            status="approved", due_before=now, limit=budget * 3, sequence_ready=True
         )
         if not due:
             return
@@ -461,25 +518,32 @@ class Sender:
                 )
                 continue
 
-            gate = pre_send_check(
-                item["to_email"], item["subject"], item["body"],
-                prospect=prospect, allow_risky=allow_risky, kind=item["kind"],
-            )
-            if not gate:
-                await self.state.update_outbox_item(
-                    item["id"], status="failed",
-                    error="gate: " + "; ".join(gate.reasons)[:300],
-                )
-                logger.warning(
-                    f"Sender: gate blocked email to {item['to_email']}: "
-                    f"{gate.reasons}"
-                )
+            assessment = await assess_message(
+                self.state, item, self.config,
+                await global_context(self.state, self.config, self.provider))
+            if assessment['state'] != 'ready':
+                codes = [reason['code'] for reason in assessment['reasons']]
+                if 'suppressed' in codes or 'stop' in codes:
+                    await self.state.update_outbox_item(item['id'], status='cancelled', error='do not contact')
+                elif any(c in codes for c in ('content', 'attachments', 'missing_contact')):
+                    await self.state.update_outbox_item(item['id'], status='failed', error='gate: '+', '.join(codes))
                 continue
-
+            extra={}
+            if item.get('body_html'):
+                extra['html_body']=item['body_html']
+            if item.get('attachment_ids_json') and item['attachment_ids_json']!='[]':
+                from harvey.campaign_content import load_attachments, ContactError
+                try:
+                    async with self.state._connect() as db:
+                        extra['attachments']=await load_attachments(db,json.loads(item['attachment_ids_json']),include_content=True)
+                except (ContactError,ValueError):
+                    await self.state.update_outbox_item(item['id'],status='failed',error='attachment missing or invalid')
+                    continue
             result = await self.provider.send_email(
                 item["to_email"], item["subject"], item["body"],
                 thread_ref=item.get("thread_ref", ""),
                 in_reply_to=item.get("in_reply_to", ""),
+                **extra,
             )
             if not result.ok:
                 await self.state.update_outbox_item(
@@ -493,7 +557,7 @@ class Sender:
                 item["id"], status="sent", sent_at=now_iso,
                 message_id=result.message_id, thread_ref=result.thread_ref,
             )
-            if prospect.status in ("new", "queued"):
+            if has_sendable_status(prospect):
                 await self.state.update_prospect_status(prospect.id, "contacted")
 
             # A sent reply belongs in its conversation thread.

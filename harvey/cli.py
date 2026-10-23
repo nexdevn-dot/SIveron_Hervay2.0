@@ -1,4 +1,4 @@
-"""Harvey CLI — simple commands to install, setup, run, and manage Harvey."""
+"""Siveron CLI — simple commands to install, setup, run, and manage Siveron."""
 
 import argparse
 import asyncio
@@ -11,10 +11,10 @@ MIN_PYTHON = (3, 11)
 
 
 def _check_python_version():
-    """Refuse to install on a Python that cannot run Harvey.
+    """Refuse to install on a Python that cannot run Siveron.
 
     `python3 -m venv .venv` on macOS builds the venv from /usr/bin/python3,
-    which is 3.9 — old enough that Harvey's `X | Y` type syntax fails at
+    which is 3.9 — old enough that Siveron's `X | Y` type syntax fails at
     import. The install itself appears to succeed and the failure surfaces
     later as an unrelated-looking ImportError, so check up front and name the
     fix.
@@ -24,7 +24,7 @@ def _check_python_version():
 
     have = f"{sys.version_info.major}.{sys.version_info.minor}"
     want = f"{MIN_PYTHON[0]}.{MIN_PYTHON[1]}"
-    print(f"\n  Harvey needs Python {want} or newer. This is Python {have}.")
+    print(f"\n  Siveron needs Python {want} or newer. This is Python {have}.")
     print(f"  ({sys.executable})\n")
     print("  On macOS, `python3` is usually the system 3.9, so a venv built")
     print("  with it is 3.9 too. Build the venv from a newer Python instead:\n")
@@ -38,7 +38,7 @@ def _check_python_version():
 def cmd_install(args):
     """Install all dependencies including Playwright browsers."""
     _check_python_version()
-    print("\n  Installing Harvey dependencies...\n")
+    print("\n  Installing Siveron dependencies...\n")
 
     # Install Python packages
     print("  [1/2] Installing Python packages...")
@@ -75,7 +75,7 @@ def cmd_install(args):
         print("  ✓ Playwright browsers installed.\n")
 
     _ensure_importable(args._project_root)
-    print("  Harvey is installed. Run 'harvey setup' next.\n")
+    print("  Siveron is installed. Run 'harvey setup' next.\n")
 
 
 def _ensure_importable(project_root: str):
@@ -125,14 +125,14 @@ def cmd_setup(args):
 
 
 def cmd_run(args):
-    """Start Harvey's heartbeat loop."""
+    """Start Siveron's heartbeat loop."""
     from harvey.main import main
 
     main()
 
 
 def cmd_train(args):
-    """Train Harvey on a website."""
+    """Train Siveron on a website."""
     from harvey.trainer import Trainer
 
     url = args.url.strip()
@@ -190,7 +190,7 @@ def cmd_status(args):
         await state.init_db()
         summary = await state.get_state_summary()
 
-        print("\n  Harvey Pipeline Status")
+        print("\n  Siveron Pipeline Status")
         print("  " + "=" * 40)
         print(f"  Prospects:            {summary['prospects']}")
         print(f"  Draft campaigns:      {summary['draft_campaigns']}")
@@ -224,8 +224,10 @@ def cmd_status(args):
                     print(f"  Brain:                {label} NOT READY")
                     print(f"                        {problem}")
                 elif brain.provider == "codex":
+                    tool_status = ("no host tools; text replies only" if
+                                   brain.config.codex_restricted_text else "no tools")
                     print(f"  Brain:                {label} ready (CLI, isolation, login, "
-                          "model and account checked; no prompt sent)")
+                          f"model and account checked; {tool_status}; no prompt sent)")
                 else:
                     print(f"  Brain:                {label} (not checked: Claude is checked "
                           "by its first call)")
@@ -363,7 +365,7 @@ def cmd_export(args):
         print(f"\n  Exported {count} prospect(s) to {args.out}  ({scope})")
         if count == 0 and not args.all:
             print("  Tip: no deliverable emails yet? Add a REOON_API_KEY to .env so")
-            print("  Harvey can verify addresses, or use --all for the raw list.\n")
+            print("  Siveron can verify addresses, or use --all for the raw list.\n")
         else:
             print("  The CSV imports directly into Instantly, Smartlead, or any sequencer.\n")
 
@@ -550,7 +552,7 @@ def cmd_discover(args):
 
 
 def cmd_signals(args):
-    """Review the signal vocabulary — Harvey proposes, you confirm.
+    """Review the signal vocabulary — Siveron proposes, you confirm.
 
     Nothing is collected until a signal is confirmed, so a fresh install
     prospects against nothing until someone makes these decisions.
@@ -639,7 +641,7 @@ def main():
 
     parser = argparse.ArgumentParser(
         prog="harvey",
-        description="Harvey — Autonomous AI Sales Agent. Always Be Closing.",
+        description="Siveron — Autonomous AI Sales Agent. Always Be Closing.",
     )
     subparsers = parser.add_subparsers(dest="command")
 
@@ -652,11 +654,11 @@ def main():
     sub.set_defaults(func=cmd_setup)
 
     # harvey run
-    sub = subparsers.add_parser("run", help="Start Harvey's heartbeat loop")
+    sub = subparsers.add_parser("run", help="Start Siveron's heartbeat loop")
     sub.set_defaults(func=cmd_run)
 
     # harvey train <url>
-    sub = subparsers.add_parser("train", help="Train Harvey on a website")
+    sub = subparsers.add_parser("train", help="Train Siveron on a website")
     sub.add_argument("url", help="Website URL to crawl and learn from")
     sub.add_argument(
         "max_pages",
@@ -748,7 +750,7 @@ def main():
     sub.set_defaults(func=cmd_profile)
 
     sub = subparsers.add_parser(
-        "signals", help="Review/confirm which signals Harvey prospects against")
+        "signals", help="Review/confirm which signals Siveron prospects against")
     sub.add_argument("--confirm", metavar="CODES", default="",
                      help="Comma-separated codes to confirm ('all' or 'free' accepted)")
     sub.add_argument("--reject", metavar="CODES", default="",
@@ -772,7 +774,7 @@ def main():
         parser.print_help()
         print("\n  Quick start:")
         print("    harvey install   — Install dependencies")
-        print("    harvey setup     — Configure Harvey (first time)")
+        print("    harvey setup     — Configure Siveron (first time)")
         print("    harvey run       — Start closing deals")
         print("    harvey dashboard — Open the web dashboard")
         print()

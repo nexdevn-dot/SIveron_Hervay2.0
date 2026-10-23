@@ -30,7 +30,7 @@ MAX_SUBJECT_LEN = 90
 MAX_BODY_WORDS = 220        # hard ceiling; sequences aim far lower
 MAX_LINKS = 1
 
-EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
+from harvey.email_checks import EMAIL_RE, send_address_valid
 MERGE_TAG_RE = re.compile(r"\{\{\s*\w+\s*\}\}|\{\s*\w+\s*\}(?!\})")
 URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 
@@ -53,6 +53,7 @@ def pre_send_check(
     prospect=None,
     allow_risky: bool = False,
     kind: str = "sequence",
+    verification_optional: bool = False,
 ) -> GateResult:
     """Run every deterministic check. Returns ok=False with reasons on any hit."""
     reasons: list[str] = []
@@ -61,14 +62,16 @@ def pre_send_check(
     to_email = (to_email or "").strip().lower()
 
     # Recipient sanity
-    if not EMAIL_RE.match(to_email):
+    if not send_address_valid(to_email):
         reasons.append(f"invalid recipient address '{to_email}'")
     if prospect is not None:
+        if getattr(prospect, "do_not_contact", False) or getattr(prospect, "status", "") == "opted_out":
+            reasons.append("contact is suppressed (do not contact)")
         if (prospect.email or "").strip().lower() != to_email:
             reasons.append("recipient does not match the prospect record")
         allowed = DELIVERABLE_STATUSES if allow_risky else {"verified"}
         # Replies go back to someone who emailed US — deliverability proven.
-        if kind == "sequence" and (prospect.email_status or "guess") not in allowed:
+        if kind == "sequence" and not verification_optional and (prospect.email_status or "guess") not in allowed:
             reasons.append(
                 f"email_status '{prospect.email_status or 'guess'}' is not deliverable"
             )
@@ -100,7 +103,7 @@ def pre_send_check(
     if len(links) > MAX_LINKS:
         reasons.append(f"too many links ({len(links)} > {MAX_LINKS})")
 
-    # No HTML — Harvey sends plain text only
+    # The plain-text alternative must not contain raw HTML. Rich HTML is built separately from validated nodes.
     if re.search(r"<\s*(html|body|div|table|img|a)\b", body, re.IGNORECASE):
         reasons.append("HTML markup in body (plain text only)")
 

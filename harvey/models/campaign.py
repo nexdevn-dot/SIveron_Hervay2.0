@@ -15,6 +15,8 @@ class EmailStep(BaseModel):
     step: int
     subject: str
     body: str
+    body_doc: dict | None = None
+    attachment_ids: list[str] = Field(default_factory=list)
     delay_days: int = 0  # days after previous step
 
 

@@ -3,7 +3,7 @@
 Reads the real 5-hour-window and weekly utilization the same way Claude
 Code's own /usage command does: GET api.anthropic.com/api/oauth/usage with
 the locally-stored OAuth token. The endpoint is undocumented, so every
-failure degrades to None and callers fall back to Harvey's own call
+failure degrades to None and callers fall back to Siveron's own call
 counting. Responses are cached in-memory to stay polite.
 """
 
@@ -137,10 +137,11 @@ class QuotaClient:
     def __init__(self):
         self._cache: Optional[dict] = None
         self._cache_at = 0.0
+        self.checked_at = None
         self._cache_ttl = 0.0
         self._lock = asyncio.Lock()
 
-    async def get_utilization(self) -> Optional[dict]:
+    async def get_utilization(self, force: bool = False) -> Optional[dict]:
         """Return {'five_hour': {...}, 'seven_day': {...}} or None.
 
         Each window dict has 'utilization' (percent, 0-100) and
@@ -149,10 +150,11 @@ class QuotaClient:
         """
         async with self._lock:
             now = time.monotonic()
-            if self._cache_at and now - self._cache_at < self._cache_ttl:
+            if not force and self._cache_at and now - self._cache_at < self._cache_ttl:
                 return self._cache
 
             result = await self._fetch()
+            self.checked_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             self._cache = result
             self._cache_at = now
             self._cache_ttl = CACHE_TTL_OK if result else CACHE_TTL_FAIL

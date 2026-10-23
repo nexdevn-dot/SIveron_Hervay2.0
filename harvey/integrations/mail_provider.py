@@ -1,6 +1,6 @@
-"""Mail provider abstraction — Harvey owns its sending, Instantly optional.
+"""Mail provider abstraction — Siveron owns its sending, Instantly optional.
 
-A MailProvider gives Harvey full inbox control: send, read replies,
+A MailProvider gives Siveron full inbox control: send, read replies,
 thread. Two native providers ship:
 
 - ``gmail``  — a Google Workspace / Gmail mailbox via the Gmail REST API
@@ -59,7 +59,7 @@ def looks_like_bounce(from_email: str, subject: str) -> bool:
 
 
 class MailProvider(ABC):
-    """A mailbox Harvey can send from and read replies out of."""
+    """A mailbox Siveron can send from and read replies out of."""
 
     name: str = "base"
 
@@ -75,8 +75,10 @@ class MailProvider(ABC):
         body: str,
         thread_ref: str = "",
         in_reply_to: str = "",
+        html_body: str = "",
+        attachments: list[dict] | None = None,
     ) -> SendResult:
-        """Send one plain-text email. Reply threading when refs are given."""
+        """Send one email, with a plain-text alternative and optional HTML/attachments. Reply threading when refs are given."""
 
     @abstractmethod
     async def get_replies(self, limit: int = 50) -> list[InboundMessage]:
@@ -97,3 +99,13 @@ def get_mail_provider(config, env) -> MailProvider | None:
         from harvey.integrations.smtp_mail import SmtpImapProvider
         return SmtpImapProvider(config, env)
     return None
+
+
+def set_message_content(message, body, html_body='', attachments=None):
+    """Build MIME alternatives before adding immutable file bytes."""
+    message.set_content(body)
+    if html_body:
+        message.add_alternative('<!doctype html><html><body>'+html_body+'</body></html>',subtype='html')
+    for attachment in attachments or []:
+        maintype,subtype=attachment['mime'].split('/',1)
+        message.add_attachment(bytes(attachment['content']),maintype=maintype,subtype=subtype,filename=attachment['filename'])

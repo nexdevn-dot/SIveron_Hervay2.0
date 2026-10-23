@@ -6,11 +6,11 @@ Setup (one-time):
    type "Desktop app". Put its id/secret in .env as GMAIL_CLIENT_ID /
    GMAIL_CLIENT_SECRET.
 3. Run ``harvey gmail auth`` — opens a browser, stores the refresh token
-   in data/gmail_token.json. Done: Harvey can send and read.
+   in data/gmail_token.json. Done: Siveron can send and read.
 
 Deliverability notes: use a mailbox on a dedicated SECONDARY domain (never
 your main one), configure SPF/DKIM/DMARC, ramp volume slowly, and watch
-Google Postmaster Tools. Harvey's outbox pacing + kill switches handle the
+Google Postmaster Tools. Siveron's outbox pacing + kill switches handle the
 rest.
 """
 
@@ -135,6 +135,8 @@ class GmailProvider(MailProvider):
         body: str,
         thread_ref: str = "",
         in_reply_to: str = "",
+        html_body: str = "",
+        attachments: list[dict] | None = None,
     ) -> SendResult:
         msg = EmailMessage()
         persona = self.config.persona
@@ -144,7 +146,8 @@ class GmailProvider(MailProvider):
         if in_reply_to:
             msg["In-Reply-To"] = in_reply_to
             msg["References"] = in_reply_to
-        msg.set_content(body)
+        from harvey.integrations.mail_provider import set_message_content
+        set_message_content(msg,body,html_body,attachments)
 
         raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
         payload: dict = {"raw": raw}
@@ -291,7 +294,7 @@ def run_auth_flow(client_id: str, client_secret: str) -> bool:
             self.send_header("Content-Type", "text/html")
             self.end_headers()
             self.wfile.write(
-                b"<h2>Harvey is connected to Gmail.</h2>You can close this tab.")
+                b"<h2>Siveron is connected to Gmail.</h2>You can close this tab.")
             done.set()
 
         def log_message(self, *args):
@@ -325,7 +328,7 @@ def run_auth_flow(client_id: str, client_secret: str) -> bool:
         return False
     data = resp.json()
     if not data.get("refresh_token"):
-        print("  Google returned no refresh token. Remove Harvey from your"
+        print("  Google returned no refresh token. Remove Siveron from your"
               " account's third-party access list and retry.")
         return False
     _save_token({

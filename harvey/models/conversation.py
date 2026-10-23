@@ -14,6 +14,7 @@ def _utcnow() -> datetime:
 class Message(BaseModel):
     sender: str  # "harvey" or "prospect"
     content: str
+    provider_id: str = ""  # Durable inbox receipt, separate from AI processing.
     timestamp: datetime = Field(default_factory=_utcnow)
 
 

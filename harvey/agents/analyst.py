@@ -82,7 +82,7 @@ class Analyst:
         """Derive actionable insights from the data.
 
         Every insight names the metric, the threshold it crossed, and the
-        specific file or config to change — so a human (or Harvey itself)
+        specific file or config to change — so a human (or Siveron itself)
         can act on it without further analysis.
         """
         insights = []

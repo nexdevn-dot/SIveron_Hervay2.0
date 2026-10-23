@@ -1,4 +1,4 @@
-"""Harvey's main heartbeat loop. Always Be Closing."""
+"""Siveron's main heartbeat loop. Always Be Closing."""
 
 import asyncio
 import logging
@@ -12,6 +12,7 @@ from harvey.brain import Brain
 from harvey.config import ConfigError, load_config, load_env, HarveyConfig
 from harvey.pipeline import run_profile_stage
 from harvey.state import StateManager
+from harvey.delivery_readiness import record_runtime
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,13 +29,13 @@ ERROR_BACKOFF_CAP = 900
 # gather() only isolates a task that raises — a task that hangs (a socket or
 # lock that never resolves) blocks gather() forever, taking the whole
 # heartbeat loop down silently with it. This is the only thing standing
-# between one stuck agent and Harvey freezing for hours with no agent
+# between one stuck agent and Siveron freezing for hours with no agent
 # knowing it's dead — found in production after exactly that happened.
 CYCLE_TIMEOUT_SECONDS = 600
 
 # Cap on a single quiet-hours sleep chunk. See the quiet-hours block in
 # heartbeat() for why this exists — a system sleep/wake cycle during one
-# multi-hour asyncio.wait_for left Harvey silently stalled well past when
+# multi-hour asyncio.wait_for left Siveron silently stalled well past when
 # quiet hours actually ended.
 QUIET_HOURS_POLL_SECONDS = 300
 
@@ -79,7 +80,7 @@ async def decide_next_action(
     config: HarveyConfig,
     summary: dict | None = None,
 ) -> str:
-    """Decide what Harvey should do next based on current state.
+    """Decide what Siveron should do next based on current state.
 
     Uses deterministic priority rules (handle_replies > send_campaign >
     write_campaign > prospect > idle) instead of burning a Claude call on a
@@ -156,12 +157,12 @@ async def _interruptible_sleep(seconds: float, stop_event: asyncio.Event) -> boo
 
 
 async def heartbeat(stop_event: asyncio.Event | None = None):
-    """Harvey's main loop. Wakes up, decides, acts, sleeps. Repeat."""
+    """Siveron's main loop. Wakes up, decides, acts, sleeps. Repeat."""
     if stop_event is None:
         stop_event = asyncio.Event()
 
     logger.info("=" * 60)
-    logger.info("Harvey is online. Always Be Closing.")
+    logger.info("Siveron is online. Always Be Closing.")
     logger.info("=" * 60)
 
     try:
@@ -227,10 +228,12 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
             # login, account and model checked without a prompt.) If not, do nothing
             # this cycle — no replies consumed, nothing written or sent —
             # and say why, rather than running agents that would each fail.
+            await record_runtime(state, config=config, model_ok=None)
             problem = await brain.preflight()
+            await record_runtime(state, config=config, model_ok=not bool(problem))
             if problem:
                 logger.error(
-                    f"Harvey is paused: {problem} Nothing was sent or changed. "
+                    f"Siveron is paused: {problem} Nothing was sent or changed. "
                     f"Re-checking in {config.usage.heartbeat_interval_minutes} minutes."
                 )
                 if await _interruptible_sleep(interval, stop_event):
@@ -238,16 +241,26 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
                 continue
 
             # 3. Check usage budget (real subscription quota when readable,
-            # else Harvey's own call counter)
+            # else Siveron's own call counter)
             if not await brain.is_within_budget(
                 max_calls, max_percent=config.usage.max_daily_claude_percent
             ):
                 logger.info(
                     f"{brain.provider_label} usage limit reached "
                     f"({config.usage.max_daily_claude_percent}% of quota or "
-                    f"{max_calls} calls). Sleeping 1h, then re-checking."
+                    f"{max_calls} calls). AI tasks paused; checking approved mail without AI."
                 )
-                if await _interruptible_sleep(3600, stop_event):
+                # Native SMTP/Gmail delivery does not spend model quota. Keep
+                # stop-on-reply and bounce handling ahead of any outgoing mail;
+                # never stage new campaigns or generate responses in this mode.
+                if sender.is_native and config.channels.email.enabled:
+                    safety = await _run_agents([('mailbox_safety', handler.check_reply_safety())])
+                    await record_runtime(state, config=config, model_ok=True, reply_safe=safety.get('mailbox_safety') is True, approved_only=True)
+                    if safety.get('mailbox_safety') is True:
+                        await _run_agents([('send_approved', sender.send_approved_only())])
+                    else:
+                        logger.warning('Approved messages held: mailbox safety could not be checked.')
+                if await _interruptible_sleep(interval, stop_event):
                     break
                 continue
 
@@ -309,6 +322,7 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
                 unread = [n for n, _ in tasks
                           if n in REPLY_READERS and outcomes.get(n) is not True]
                 paused = brain.paused_reason
+                await record_runtime(state, config=config, model_ok=not bool(paused), reply_safe=not bool(unread))
                 if paused or unread:
                     reason = paused or "replies couldn't all be read and handled."
                     logger.error(
@@ -349,11 +363,11 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
             if await _interruptible_sleep(backoff, stop_event):
                 break
 
-    logger.info("Harvey shutting down. Deals don't close themselves, but I need a break.")
+    logger.info("Siveron shutting down. Deals don't close themselves, but I need a break.")
 
 
 def _needs_setup() -> bool:
-    """Check if Harvey needs first-time setup."""
+    """Check if Siveron needs first-time setup."""
     from harvey.paths import PROJECT_ROOT
     from harvey.config import _find_config_file, ConfigFileNotFoundError
 
@@ -411,7 +425,7 @@ def main():
     """Entry point."""
     # Check for first-time setup
     if _needs_setup():
-        print("\n  First time running Harvey? Let's get you set up.\n")
+        print("\n  First time running Siveron? Let's get you set up.\n")
         from harvey.setup import run_setup
         asyncio.run(run_setup())
         return

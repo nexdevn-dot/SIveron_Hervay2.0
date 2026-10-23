@@ -1,8 +1,9 @@
-"""Harvey Dashboard — local web UI to set up, control, and monitor Harvey."""
+"""Siveron Dashboard — local web UI to set up, control, and monitor Siveron."""
 
 import asyncio
 import json
 import logging
+import math
 import os
 import signal
 import subprocess
@@ -14,7 +15,7 @@ from pathlib import Path
 import aiosqlite
 import yaml
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import (
     HTMLResponse, JSONResponse, PlainTextResponse, Response,
 )
@@ -40,9 +41,9 @@ def _resolve_config_file() -> Path:
     except ConfigFileNotFoundError:
         return CONFIG_FILE
 
-app = FastAPI(title="Harvey Dashboard")
+app = FastAPI(title="Siveron Dashboard")
 
-# Harvey process tracking
+# Siveron process tracking
 _harvey_process: subprocess.Popen | None = None
 _harvey_started_at: datetime | None = None
 _env_lock = asyncio.Lock()
@@ -99,7 +100,7 @@ def _write_env_file(updates: dict[str, str]):
 
 
 def _check_harvey_pid() -> int | None:
-    """Check if there's a running Harvey process from a PID file."""
+    """Check if there's a running Siveron process from a PID file."""
     global _harvey_process, _harvey_started_at
     if _harvey_process and _harvey_process.poll() is None:
         return _harvey_process.pid
@@ -164,14 +165,14 @@ async def get_setup_status():
         "help": provider_help,
     })
 
-    # 4. Email verification (needed for addresses to be sendable, not 'guess')
+    # 4. Optional automatic email verification; manual campaigns need no key.
     verifier_set = _has("REOON_API_KEY") or _has("ZEROBOUNCE_API_KEY") or _has("HUNTER_API_KEY")
     checks.append({
         "id": "verifier", "label": "Email verification key",
         "done": verifier_set,
-        "required": True,
-        "help": "Add a Reoon (free 600/mo), ZeroBounce, or Hunter key in Settings — "
-                "without one, found emails stay 'guess' and are never sent.",
+        "required": False,
+        "help": "Optional automatic verification. Contacts with an email can be prepared "
+                "for a manual campaign and explicitly approved in the Outbox without a verification key.",
     })
 
     # 5. Config valid
@@ -187,10 +188,10 @@ async def get_setup_status():
         except Exception:
             pass
     checks.append({
-        "id": "config", "label": f"Harvey configured ({config_path.name})",
+        "id": "config", "label": f"Siveron configured ({config_path.name})",
         "done": config_valid,
         "required": True,
-        "help": "Train Harvey on your product. Use the trainer or set up manually through Claude.",
+        "help": "Train Siveron on your product. Use the trainer or set up manually through Claude.",
     })
 
     # 6. Product trained
@@ -257,6 +258,7 @@ async def get_settings():
         "SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD",
         "IMAP_HOST", "IMAP_PORT", "IMAP_USERNAME", "IMAP_PASSWORD",
         "REOON_API_KEY", "ZEROBOUNCE_API_KEY", "HUNTER_API_KEY",
+        "GEOAPIFY_API_KEY", "SERPAPI_API_KEY",
     ]
     for key in all_keys:
         if key not in env_vars:
@@ -286,9 +288,13 @@ async def get_settings():
         "smtp_password_set": is_set("SMTP_PASSWORD"),
         "imap_host": env_vars.get("IMAP_HOST", ""),
         "imap_port": env_vars.get("IMAP_PORT", ""),
+        "imap_username": env_vars.get("IMAP_USERNAME", ""),
+        "imap_password_set": is_set("IMAP_PASSWORD"),
         "reoon_api_key_set": is_set("REOON_API_KEY"),
         "zerobounce_api_key_set": is_set("ZEROBOUNCE_API_KEY"),
         "hunter_api_key_set": is_set("HUNTER_API_KEY"),
+        "geoapify_api_key_set": is_set("GEOAPIFY_API_KEY"),
+        "serpapi_api_key_set": is_set("SERPAPI_API_KEY"),
     }
 
 
@@ -308,7 +314,8 @@ async def save_env_settings(request: Request):
                      "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET",
                      "SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD",
                      "IMAP_HOST", "IMAP_PORT", "IMAP_USERNAME", "IMAP_PASSWORD",
-                     "REOON_API_KEY", "ZEROBOUNCE_API_KEY", "HUNTER_API_KEY"]:
+                     "REOON_API_KEY", "ZEROBOUNCE_API_KEY", "HUNTER_API_KEY",
+                     "GEOAPIFY_API_KEY", "SERPAPI_API_KEY", "SERPER_API_KEY"]:
             if key in data and data[key] is not None:
                 # Strip newlines so a crafted value can't inject extra .env entries
                 updates[key] = str(data[key]).replace("\n", " ").replace("\r", " ").strip()
@@ -351,23 +358,392 @@ async def test_instantly(request: Request):
 
 @app.get("/api/companies")
 async def get_companies():
-    """All companies with contact counts."""
+    """Companies plus known contact details; reading never crawls sites."""
+    state = _state()
+    await state.init_db()
     rows = await query_db("""
         SELECT c.*,
-            (SELECT COUNT(*) FROM prospects p WHERE p.company_id = c.id) as contact_count
-        FROM companies c ORDER BY c.created_at DESC LIMIT 200
+            (SELECT COUNT(*) FROM prospects p WHERE p.company_id = c.id AND p.id NOT IN (SELECT prospect_id FROM contact_trash)) as contact_count
+        FROM companies c WHERE c.removed_at IS NULL ORDER BY c.created_at DESC LIMIT 200
     """)
+    return await _company_contact_details(rows)
+
+
+async def _company_contact_details(rows, include_validation=False):
+    """Attach the same known, valid addresses to list and paginated views."""
+    if not rows:
+        return rows
+    from harvey.collectors.company_contacts import valid_email
+    by_id = {row['id']: row for row in rows}
+    for row in rows:
+        row['contact_emails'], row['contact_phones'], row['social_profiles'] = [], [], []
+        if row.get('phone'):
+            row['contact_phones'].append(row['phone'])
+    placeholders = ','.join('?' for _ in rows)
+    people = await query_db(
+        f"SELECT company_id, email, email_status, email_verified, source_url, phone "
+        f"FROM prospects WHERE id NOT IN (SELECT prospect_id FROM contact_trash) AND company_id IN ({placeholders}) "
+        f"ORDER BY (email_verified = 1 OR email_status = 'verified') DESC, score DESC",
+        tuple(by_id))
+    public = await query_db(
+        f"SELECT company_id, email, source_url, found_at, checked_at, validation_json FROM company_public_emails WHERE company_id IN ({placeholders})",
+        tuple(by_id))
+    socials = await query_db(f"SELECT company_id,url,network,source_url FROM company_social_profiles WHERE company_id IN ({placeholders})", tuple(by_id))
+    for profile in socials:
+        by_id[profile['company_id']]['social_profiles'].append(profile)
+    for item in people + public:
+        row = by_id[item['company_id']]
+        email = (item.get('email') or '').strip().lower()
+        if valid_email(email) and item.get('email_status') != 'invalid':
+            status = 'verified' if item.get('email_verified') else item.get('email_status') or 'unverified'
+            if not any(entry['email'] == email for entry in row['contact_emails']):
+                entry = {'email': email, 'status': status, 'source_url': item.get('source_url') or ''}
+                if include_validation:
+                    entry.update(found_at=item.get('found_at'), checked_at=item.get('checked_at'),
+                                 validation=json.loads(item.get('validation_json') or '{}'))
+                row['contact_emails'].append(entry)
+        if item.get('phone') and item['phone'] not in row['contact_phones']:
+            row['contact_phones'].append(item['phone'])
     return rows
+
+
+@app.get('/api/companies/page')
+async def get_company_page(
+    page: int = Query(1, ge=1), q: str = Query('', max_length=200),
+    location: str = Query('', max_length=300), industry: str = Query('', max_length=1000),
+    locations: list[str] = Query(default=[]), industries: list[str] = Query(default=[]),
+    email: str = Query('', pattern='^(|with|without)$'),
+    website: str = Query('', pattern='^(|with|without)$'),
+    phone: str = Query('', pattern='^(|with|without)$'),
+    people: str = Query('', pattern='^(|with|without)$'),
+    profiles: str = Query('', pattern='^(|with|without)$'),
+    source: str = Query('', max_length=1000),
+):
+    from harvey.company_filtering import validate_filters, page_data
+    try:
+        filters=validate_filters({'q':q,'locations':locations or ([location] if location else []),
+            'industries':industries or ([industry] if industry else []),
+            'email':email,'website':website,'phone':phone,'people':people,'profiles':profiles,'source':source})
+    except ValueError as exc:
+        return JSONResponse({'error':str(exc)},status_code=422)
+    state=_state(); await state.init_db()
+    data=await page_data(DB_PATH,page,filters)
+    data['items']=await _company_contact_details(data['items'],include_validation=True)
+    return data
+
+
+@app.get('/api/company-filter-views')
+async def get_company_filter_views():
+    state=_state(); await state.init_db()
+    async with state._connect() as db:
+        db.row_factory=aiosqlite.Row
+        rows=await (await db.execute('SELECT id,name,filters_json FROM company_filter_views ORDER BY name COLLATE NOCASE,id')).fetchall()
+    return [{'id':r['id'],'name':r['name'],'filters':json.loads(r['filters_json'])} for r in rows]
+
+
+@app.post('/api/company-filter-views')
+async def save_company_filter_view(request: Request):
+    from harvey.company_filtering import validate_filters
+    try:
+        body=await request.json()
+        name=body.get('name') if isinstance(body,dict) else None
+        if not isinstance(name,str) or not 1 <= len(name.strip()) <= 60:
+            raise ValueError('View name must contain 1–60 characters')
+        filters=validate_filters(body.get('filters'))
+    except (ValueError,TypeError) as exc:
+        return JSONResponse({'error':str(exc)},status_code=422)
+    state=_state();await state.init_db();ident=uuid.uuid4().hex
+    async with state._connect() as db:
+        await db.execute('BEGIN IMMEDIATE')
+        if (await (await db.execute('SELECT COUNT(*) FROM company_filter_views')).fetchone())[0]>=30:
+            return JSONResponse({'error':'At most 30 saved views are allowed'},status_code=422)
+        duplicate=await (await db.execute('SELECT id FROM company_filter_views WHERE name=? COLLATE NOCASE',(name.strip(),))).fetchone()
+        if duplicate:
+            return JSONResponse({'error':'A view with this name already exists'},status_code=409)
+        await db.execute('INSERT INTO company_filter_views(id,name,filters_json) VALUES(?,?,?)',(ident,name.strip(),json.dumps(filters)))
+        await db.commit()
+    return {'id':ident,'name':name.strip(),'filters':filters}
+
+
+@app.delete('/api/company-filter-views/{view_id}')
+async def delete_company_filter_view(view_id: str):
+    state=_state();await state.init_db()
+    async with state._connect() as db:
+        cursor=await db.execute('DELETE FROM company_filter_views WHERE id=?',(view_id,))
+        await db.commit()
+    return JSONResponse({'success':True}) if cursor.rowcount else JSONResponse({'error':'View not found'},status_code=404)
+
+
+@app.get('/api/companies/{company_id}/profile')
+async def get_company_profile(company_id: str):
+    """Read an exact stored company; never triggers research or modifies selection."""
+    state = _state()
+    await state.init_db()
+    rows = await query_db('SELECT * FROM companies WHERE id=? AND removed_at IS NULL', (company_id,))
+    if not rows:
+        return JSONResponse({'error': 'Company unavailable'}, status_code=404)
+    company = (await _company_contact_details(rows, include_validation=True))[0]
+    contacts = await get_company_contacts(company_id)
+    candidates = await query_db("SELECT * FROM company_field_candidates WHERE company_id=? AND status='pending' ORDER BY checked_at DESC,id LIMIT 100", (company_id,))
+    for item in candidates:
+        item['current_value'] = (company.get(item['field']) or '') if item['field'] in ('phone','location') else ''
+    candidates = [item for item in candidates if item['value'] != item['current_value']]
+    return {'company': company, 'contacts': contacts, 'field_candidates': candidates}
+
+
+@app.post('/api/companies/remove-selected')
+async def remove_selected_companies(request: Request):
+    try:
+        body = await request.json()
+        ids = body.get('company_ids') if isinstance(body, dict) else None
+        if not isinstance(ids, list) or not 1 <= len(ids) <= 1000 or any(not isinstance(i, str) or not i.strip() or len(i) > 100 for i in ids):
+            raise ValueError()
+    except (ValueError, TypeError):
+        return JSONResponse({'error': 'Choose between 1 and 1000 company IDs'}, status_code=422)
+    if _company_contact_lookups:
+        return JSONResponse({'status': 'busy', 'removed': 0}, status_code=409)
+    state = _state()
+    await state.init_db()
+    result = await state.remove_selected_companies(list(dict.fromkeys(ids)))
+    return JSONResponse(result, status_code=409 if result['status'] == 'busy' else 200)
+
+
+@app.post('/api/companies/cleanup')
+async def cleanup_companies(request: Request):
+    company_ids = None
+    if await request.body():
+        try:
+            payload = await request.json()
+            if not isinstance(payload, dict) or set(payload) != {'company_ids'}:
+                raise ValueError()
+            company_ids = payload['company_ids']
+            if not isinstance(company_ids, list) or not 1 <= len(company_ids) <= 1000 or any(not isinstance(cid, str) or not cid or len(cid)>100 for cid in company_ids):
+                raise ValueError()
+            company_ids = list(dict.fromkeys(company_ids))
+        except (ValueError, TypeError):
+            return JSONResponse({'error':'Invalid company selection'}, status_code=422)
+    state = _state()
+    await state.init_db()
+    if _company_contact_lookups:
+        return JSONResponse({'status': 'busy', 'removed': 0}, status_code=409)
+    result = await state.cleanup_unreachable_companies(company_ids)
+    return JSONResponse(result, status_code=409 if result['status'] == 'busy' else 200)
+
+
+@app.post('/api/companies/cleanup/{batch_id}/restore')
+async def restore_company_cleanup(batch_id: str):
+    if len(batch_id) != 32 or any(char not in '0123456789abcdef' for char in batch_id):
+        return JSONResponse({'error': 'Invalid cleanup batch'}, status_code=422)
+    state = _state()
+    await state.init_db()
+    return {'restored': await state.restore_company_cleanup(batch_id)}
+
+
+_company_contact_lookups = set()
+
+
+_contact_jobs = None
+
+
+def _company_email_jobs():
+    global _contact_jobs
+    from harvey.collectors.contact_jobs import ContactJobs
+    if _contact_jobs is None or str(_contact_jobs.state.db_path) != str(DB_PATH):
+        _contact_jobs = ContactJobs(_state())
+    return _contact_jobs
+
+
+@app.post('/api/company-email-jobs')
+async def create_company_email_job(request: Request):
+    try:
+        payload = await request.json()
+    except ValueError:
+        return JSONResponse({'error': 'Invalid JSON'}, status_code=422)
+    ids = payload.get('company_ids') if isinstance(payload, dict) else None
+    if (not isinstance(ids, list) or not 1 <= len(ids) <= 1000 or
+            any(not isinstance(value, str) or not value or len(value) > 100 for value in ids)):
+        return JSONResponse({'error': 'Choose between 1 and 1000 companies'}, status_code=422)
+    service = _company_email_jobs()
+    await service.state.init_db()
+    for company_id in set(ids):
+        if not await service.state.get_company(company_id):
+            return JSONResponse({'error': 'Company not found'}, status_code=404)
+    mode = payload.get('mode','quick')
+    if mode not in ('quick','thorough'):
+        return JSONResponse({'error':'Invalid email search mode'}, status_code=422)
+    job_id = await service.create(ids, mode=mode)
+    if job_id is None:
+        return JSONResponse({'error': 'A public email search is already running'}, status_code=409)
+    return await service.snapshot(job_id)
+
+
+@app.post('/api/company-email-jobs/{job_id}/retry')
+async def retry_company_email_job(job_id:str):
+    service=_company_email_jobs()
+    await service.state.init_db()
+    if not await service.retry(job_id):
+        return JSONResponse({'error':'No retry available. Wait 60 seconds; only transient failures from a completed job can retry, up to two times.'},status_code=409)
+    return await service.snapshot(job_id)
+
+
+@app.get('/api/company-email-jobs/latest')
+async def latest_company_email_job():
+    return await _company_email_jobs().snapshot()
+
+
+@app.post('/api/company-email-jobs/{job_id}/stop')
+async def stop_company_email_job(job_id: str):
+    service = _company_email_jobs()
+    if not await service.snapshot(job_id):
+        return JSONResponse({'error': 'Job not found'}, status_code=404)
+    await service.stop(job_id)
+    return await service.snapshot(job_id)
+
+
+@app.post('/api/companies/{company_id}/lookup-contacts')
+async def lookup_company_contacts(company_id: str, request: Request):
+    """Explicit bounded website lookup; no verification, contacts or sending."""
+    if company_id in _company_contact_lookups or len(_company_contact_lookups) >= 3:
+        return JSONResponse({'status': 'busy'}, status_code=409)
+    state = _state()
+    await state.init_db()
+    company = await state.get_company(company_id)
+    if company is None:
+        return JSONResponse({'status': 'not_found'}, status_code=404)
+    from harvey.collectors.company_contacts import lookup_company_emails
+    try:
+        payload = await request.json()
+    except ValueError:
+        payload = {}
+    mode = payload.get('mode','quick') if isinstance(payload,dict) else None
+    if mode not in ('quick','thorough'):
+        return JSONResponse({'error':'Invalid email search mode'},status_code=422)
+    _company_contact_lookups.add(company_id)
+    try:
+        return await asyncio.wait_for(lookup_company_emails(company, state, **({'mode':mode} if mode != 'quick' else {})), timeout=80 if mode == 'thorough' else 25)
+    except Exception as error:
+        logger.info('Company contact lookup unavailable for company %s', company_id)
+        from harvey.lookup_diagnostics import diagnostic
+        return {'status':'unreachable','found':0,'diagnostics':[diagnostic('lookup','timeout' if isinstance(error,TimeoutError) else 'lookup_failed',retryable=True)]}
+    finally:
+        _company_contact_lookups.discard(company_id)
 
 
 @app.get("/api/companies/{company_id}/contacts")
 async def get_company_contacts(company_id: str):
     """Get all contacts for a specific company."""
     rows = await query_db(
-        "SELECT * FROM prospects WHERE company_id = ? ORDER BY score DESC",
+        "SELECT * FROM prospects WHERE company_id = ? AND id NOT IN (SELECT prospect_id FROM contact_trash) ORDER BY score DESC",
         (company_id,),
     )
     return rows
+
+
+# Explicit person discovery and contact creation, independent of agent prospecting.
+_people_jobs = None
+
+
+def _company_people_jobs():
+    global _people_jobs
+    from harvey.collectors.contact_jobs import ContactJobs
+    if _people_jobs is None or str(_people_jobs.state.db_path) != str(DB_PATH):
+        _people_jobs = ContactJobs(_state(), kind='people')
+    return _people_jobs
+
+
+@app.post('/api/company-people-jobs')
+async def create_company_people_job(request: Request):
+    try:
+        payload = await request.json()
+    except ValueError:
+        return JSONResponse({'error': 'Ungültige Anfrage.'}, status_code=422)
+    ids = payload.get('company_ids') if isinstance(payload, dict) else None
+    if (not isinstance(ids, list) or not 1 <= len(ids) <= 1000 or
+            any(not isinstance(v, str) or not v or len(v) > 100 for v in ids)):
+        return JSONResponse({'error': 'Bitte 1 bis 1000 Unternehmen auswählen.'}, status_code=422)
+    service = _company_people_jobs()
+    await service.state.init_db()
+    async with service.state._connect() as db:
+        for company_id in set(ids):
+            row = await (await db.execute('SELECT id FROM companies WHERE id=? AND removed_at IS NULL', (company_id,))).fetchone()
+            if not row:
+                return JSONResponse({'error': 'Ein Unternehmen ist nicht mehr verfügbar.'}, status_code=404)
+    chosen = payload.get('decision_makers')
+    if chosen is not None:
+        try:
+            from harvey.decision_makers import criteria
+            chosen=criteria(chosen)
+        except (ValueError,TypeError):
+            return JSONResponse({'error':'Bitte gültige Zielrollen auswählen.'},status_code=422)
+    job_id = await service.create(ids,people_criteria=chosen)
+    if not job_id:
+        return JSONResponse({'error': 'Es läuft bereits eine Suche nach Ansprechpersonen.'}, status_code=409)
+    return await service.snapshot(job_id)
+
+
+@app.get('/api/company-people-jobs/latest')
+async def latest_company_people_job():
+    return await _company_people_jobs().snapshot()
+
+
+@app.post('/api/company-people-jobs/{job_id}/stop')
+async def stop_company_people_job(job_id: str):
+    service = _company_people_jobs()
+    if not await service.snapshot(job_id):
+        return JSONResponse({'error': 'Suche nicht gefunden.'}, status_code=404)
+    await service.stop(job_id)
+    return await service.snapshot(job_id)
+
+
+@app.get('/api/person-candidates')
+async def get_person_candidates(job_id: str = '', company_id: str = ''):
+    state = _state()
+    await state.init_db()
+    return await query_db('''SELECT p.*, c.name AS company FROM person_candidates p
+        JOIN companies c ON c.id=p.company_id WHERE p.status='pending' AND c.removed_at IS NULL
+        AND (?='' OR p.company_id=?) AND (?='' OR EXISTS
+          (SELECT 1 FROM company_people_job_items j WHERE j.company_id=p.company_id AND j.job_id=?))
+        ORDER BY p.found_at DESC, p.id''', (company_id, company_id, job_id, job_id))
+
+
+@app.post('/api/contacts')
+async def add_manual_contact(request: Request):
+    return await _save_explicit_contact(request)
+
+
+@app.post('/api/person-candidates/{candidate_id}/accept')
+async def accept_person_candidate(candidate_id: str, request: Request):
+    return await _save_explicit_contact(request, candidate_id)
+
+
+async def _save_explicit_contact(request, candidate_id=None):
+    from harvey.contacts import create_contact, ContactError
+    state = _state()
+    await state.init_db()
+    try:
+        payload = await request.json()
+        return await create_contact(state, payload, candidate_id)
+    except (ValueError, ContactError) as error:
+        return JSONResponse({'error': str(error)}, status_code=422)
+
+
+@app.post('/api/person-candidates/{candidate_id}/dismiss')
+async def dismiss_person_candidate(candidate_id: str):
+    state = _state()
+    await state.init_db()
+    async with state._connect() as db:
+        cursor = await db.execute("UPDATE person_candidates SET status='dismissed' WHERE id=? AND status='pending'", (candidate_id,))
+        await db.commit()
+    return {'dismissed': bool(cursor.rowcount)}
+
+
+@app.get('/api/contact-company-options')
+async def contact_company_options(q: str = Query('', max_length=200)):
+    state = _state()
+    await state.init_db()
+    return await query_db('''SELECT id, name, phone, website FROM companies
+        WHERE removed_at IS NULL AND instr(lower(name), lower(?)) > 0
+        ORDER BY name COLLATE NOCASE LIMIT 100''', (q,))
 
 
 # ── Feedback ──
@@ -422,12 +798,12 @@ async def get_feedback(entity_type: str, entity_id: str):
     return rows
 
 
-# ── Harvey Controls ──
+# ── Siveron Controls ──
 
 
 @app.get("/api/harvey/status")
 async def get_harvey_status():
-    """Check if Harvey is currently running."""
+    """Check if Siveron is currently running."""
     pid = _check_harvey_pid()
     started = _harvey_started_at.isoformat() if _harvey_started_at else None
     return {"running": pid is not None, "pid": pid, "started_at": started}
@@ -435,11 +811,11 @@ async def get_harvey_status():
 
 @app.post("/api/harvey/start")
 async def start_harvey():
-    """Start Harvey's heartbeat loop as a subprocess."""
+    """Start Siveron's heartbeat loop as a subprocess."""
     global _harvey_process, _harvey_started_at
 
     if _check_harvey_pid():
-        return {"success": False, "message": "Harvey is already running."}
+        return {"success": False, "message": "Siveron is already running."}
 
     # Ensure data dir exists
     (PROJECT_ROOT / "data").mkdir(parents=True, exist_ok=True)
@@ -448,7 +824,7 @@ async def start_harvey():
         log_handle = open(LOG_FILE, "a")
         try:
             _harvey_process = subprocess.Popen(
-                [sys.executable, "-m", "harvey"],
+                [sys.executable, "-m", "harvey", "run"],
                 cwd=str(PROJECT_ROOT),
                 stdout=log_handle,
                 stderr=log_handle,
@@ -458,8 +834,8 @@ async def start_harvey():
             # Child holds its own copies of the fds; don't leak ours.
             log_handle.close()
     except Exception as e:
-        logger.warning("Failed to start Harvey: %s", e)
-        return {"success": False, "message": f"Failed to start Harvey: {e}"}
+        logger.warning("Failed to start Siveron: %s", e)
+        return {"success": False, "message": f"Failed to start Siveron: {e}"}
     _harvey_started_at = datetime.now()
 
     # Write PID file
@@ -473,12 +849,12 @@ async def start_harvey():
 
 @app.post("/api/harvey/stop")
 async def stop_harvey():
-    """Stop the Harvey subprocess."""
+    """Stop the Siveron subprocess."""
     global _harvey_process, _harvey_started_at
 
     pid = _check_harvey_pid()
     if not pid:
-        return {"success": False, "message": "Harvey is not running."}
+        return {"success": False, "message": "Siveron is not running."}
 
     try:
         os.kill(pid, signal.SIGTERM)
@@ -531,7 +907,7 @@ async def get_stats():
     """Pipeline overview stats."""
     try:
         prospects = await query_db(
-            "SELECT status, COUNT(*) as count FROM prospects GROUP BY status"
+            "SELECT status, COUNT(*) as count FROM prospects WHERE id NOT IN (SELECT prospect_id FROM contact_trash) GROUP BY status"
         )
         prospect_total = sum(r["count"] for r in prospects)
         prospect_map = {r["status"]: r["count"] for r in prospects}
@@ -623,7 +999,7 @@ def _quota_client_for(provider: str, model: str = ""):
 
 
 @app.get("/api/usage")
-async def get_usage():
+async def get_usage(refresh: bool = False):
     """Token/cost accounting + live subscription quota for the Usage tab."""
 
     totals = {}
@@ -655,16 +1031,19 @@ async def get_usage():
     brain = _active_brain()
     provider = brain.provider if brain else ""
     quota = None
+    quota_checked_at = None
     try:
         client = _quota_client_for(provider, brain.model if brain else "")
         if client is not None:
-            quota = await client.get_utilization()
+            quota = await client.get_utilization(force=True) if refresh else await client.get_utilization()
+            quota_checked_at = getattr(client, "checked_at", None)
     except Exception as e:
         logger.debug("Quota lookup failed: %s", e)
 
     return {
         "provider": provider,
         "quota": quota,
+        "quota_checked_at": quota_checked_at,
         # Whose quota this is, even when it couldn't be read, so the UI shows
         # "unavailable" for the active provider instead of hiding the gauge.
         "quota_provider": provider,
@@ -680,7 +1059,7 @@ async def get_usage():
 
 @app.get("/api/prospects")
 async def get_prospects():
-    rows = await query_db("SELECT * FROM prospects ORDER BY created_at DESC LIMIT 200")
+    rows = await query_db("SELECT * FROM prospects WHERE id NOT IN (SELECT prospect_id FROM contact_trash) ORDER BY created_at DESC LIMIT 200")
     return rows
 
 
@@ -689,33 +1068,72 @@ def _state():
     return StateManager(db_path=str(DB_PATH))
 
 
+async def _delivery_assessment_context(state):
+    from harvey.delivery_readiness import global_context,runtime_codes,utcnow,config_signature
+    from harvey.config import load_config,load_env
+    from harvey.integrations.mail_provider import get_mail_provider
+    now=utcnow()
+    try:
+        config=load_config(str(_resolve_config_file()))
+        context=await global_context(state,config,get_mail_provider(config,load_env()),now)
+        runtime=runtime_codes(await state.get_setting('delivery_runtime'),_check_harvey_pid(),now,
+            max(60,config.usage.heartbeat_interval_minutes*120+60),config_signature(config))
+        return config,context,runtime
+    except Exception:
+        return None,{'codes':['config'],'remaining':None,'now':now},['runtime_unknown']
+
+
 @app.get("/api/outbox")
-async def get_outbox_api():
+async def get_outbox_api(campaign_id: str | None = Query(default=None, max_length=100), item_id:str|None=Query(default=None,max_length=100)):
     """Outbox queue + kill-switch state for the Outbox tab."""
     try:
         state = _state()
         await state.init_db()
-        return {
+        data = {
             "paused": await state.get_setting("sending_paused"),
-            "pending": await state.get_outbox(status="pending_review", limit=100),
-            "approved": await state.get_outbox(status="approved", limit=50),
+            "pending": await state.get_outbox(status="pending_review", limit=100, campaign_id=campaign_id),
+            "approved": await state.get_outbox(status="approved", limit=50, campaign_id=campaign_id),
             "sent": (await query_db(
-                "SELECT * FROM outbox WHERE status = 'sent' "
-                "ORDER BY sent_at DESC LIMIT 25")),
+                "SELECT * FROM outbox WHERE status = 'sent' " + ("AND campaign_id=? " if campaign_id is not None else "") +
+                "ORDER BY sent_at DESC LIMIT 25", (campaign_id,) if campaign_id is not None else ())),
             "failed": (await query_db(
-                "SELECT * FROM outbox WHERE status IN ('failed','rejected','cancelled') "
-                "ORDER BY updated_at DESC LIMIT 25")),
+                "SELECT * FROM outbox WHERE status IN ('failed','rejected','cancelled') " + ("AND campaign_id=? " if campaign_id is not None else "") +
+                "ORDER BY updated_at DESC LIMIT 25", (campaign_id,) if campaign_id is not None else ())),
         }
+        if item_id is not None:
+            rows=await query_db('SELECT * FROM outbox WHERE id=?'+(' AND campaign_id=?' if campaign_id is not None else ''),(item_id,campaign_id) if campaign_id is not None else (item_id,))
+            for group,statuses in [('pending',{'pending_review'}),('approved',{'approved'}),('sent',{'sent'}),('failed',{'failed','rejected','cancelled'})]:
+                data[group]=[r for r in rows if r['status'] in statuses]
+            data['item_id']=item_id
+        if campaign_id is not None:
+            campaign = await query_db('SELECT name FROM campaigns WHERE id=?', (campaign_id,))
+            data['campaign_id'] = campaign_id
+            data['campaign_name'] = campaign[0]['name'] if campaign else campaign_id
+        from harvey.delivery_readiness import assess_message,result
+        config,context,runtime=await _delivery_assessment_context(state)
+        now=context['now']
+        for group in ('pending', 'approved', 'sent', 'failed'):
+            for item in data[group]:
+                if config is not None:
+                    item['readiness'] = await assess_message(state, item, config, context, runtime=runtime)
+                elif item['status'] == 'sent':
+                    item['readiness'] = {'state':'sent','reasons':[],'earliest_at':None,'remaining_today':None}
+                else:
+                    codes = [item['status']] if item['status'] in ('failed','rejected','cancelled') else ['config','runtime_unknown'] + (['approval'] if item['status']=='pending_review' else [])
+                    item['readiness'] = result(codes)
+        data['readiness_checked_at'] = now.isoformat()+'Z'
+        return data
+
     except Exception as e:
         return {"error": str(e)}
 
 
 @app.post("/api/outbox/approve-all")
-async def outbox_approve_all():
+async def outbox_approve_all(campaign_id: str | None = Query(default=None, max_length=100)):
     try:
         state = _state()
         await state.init_db()
-        n = await state.approve_outbox()
+        n = await state.approve_outbox(campaign_id=campaign_id)
         return {"success": True, "approved": n}
     except Exception as e:
         return JSONResponse({"success": False, "message": str(e)}, status_code=500)
@@ -801,9 +1219,11 @@ async def get_campaigns():
 @app.get("/api/conversations")
 async def get_conversations():
     rows = await query_db("""
-        SELECT c.*, p.first_name, p.last_name, p.email as prospect_email, p.company
+        SELECT c.*, p.first_name, p.last_name, p.email as prospect_email, p.company,
+               campaigns.name AS campaign_name
         FROM conversations c
         LEFT JOIN prospects p ON c.prospect_id = p.id
+        LEFT JOIN campaigns ON c.campaign_id = campaigns.id
         ORDER BY c.updated_at DESC LIMIT 100
     """)
     for row in rows:
@@ -835,35 +1255,173 @@ async def get_activity():
 
 _discovery_task: asyncio.Task | None = None
 _discovery_report: dict | None = None
+_discovery_start_lock = asyncio.Lock()
 
 
 def _discovery_queries(body: dict, config):
     from harvey.collectors.discover import build_queries
 
     cities = [c.strip() for c in (body.get("cities") or []) if c.strip()] or None
-    return build_queries(
+    raw_terms = body.get("terms")
+    terms = ([t.strip() for t in raw_terms if isinstance(t, str) and t.strip()]
+             if isinstance(raw_terms, list) else None)
+    radius = body.get('radius_km', 40)
+    if isinstance(radius, bool) or not isinstance(radius, (int, float)) or not math.isfinite(radius) or not 1 <= radius <= 200:
+        raise ValueError('Search radius must be between 1 and 200 km')
+    queries = build_queries(
         config, cities=cities,
         depth=int(body.get("depth") or 30),
         limit=int(body.get("limit") or 100),
+        terms=terms,
     )
+    locations = body.get('locations') or []
+    if not isinstance(locations, list) or len(locations) > 50:
+        raise ValueError('Invalid locations')
+    coords = {}
+    for location in locations:
+        if not isinstance(location, dict) or not isinstance(location.get('name'), str):
+            raise ValueError('Invalid location')
+        lat, lon = location.get('lat'), location.get('lon')
+        if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) for value in (lat, lon)) or not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            raise ValueError('Invalid location coordinates')
+        coords[location['name']] = f'{lat},{lon},{radius}'
+    for query in queries:
+        if query.location in coords:
+            query.coordinate = coords[query.location]
+        elif query.coordinate and 'radius_km' in body:
+            query.coordinate = ','.join(query.coordinate.split(',')[:2]) + f',{radius}'
+    if not isinstance(body.get('email_search', False),bool) or body.get('email_mode','quick') not in ('quick','thorough'):
+        raise ValueError('Invalid email search options')
+    if body.get('provider') == 'google_maps':
+        if not cities and not coords:
+            raise ValueError('Google Maps requires a specific location.')
+        mode, profile = body.get('maps_mode', 'quick'), body.get('maps_filter', 'all')
+        resume = body.get('maps_resume', True)
+        if not isinstance(resume, bool):
+            raise ValueError('Invalid resume option')
+        for query in queries:
+            query.maps_mode, query.maps_filter, query.maps_resume = mode, profile, resume
+        from harvey.collectors.google_maps import plan
+        plan(queries)  # Validate and bound before any background work starts.
+    return queries
+
+
+
+def _discovery_category_supported(provider_key, term):
+    from harvey.collectors.discover import PROVIDERS
+    if provider_key == "osm":
+        return bool(PROVIDERS[provider_key]._tags(term))
+    if provider_key == "geoapify":
+        return bool(PROVIDERS[provider_key].category_for(term))
+    return True
+
+
+async def _discovery_quota(state, provider_key, queries):
+    from harvey.collectors.discovery_quota import LIMITS, quota_status
+    from harvey.collectors.discover import PROVIDERS
+    if provider_key not in LIMITS:
+        return None
+    required = sum(PROVIDERS[provider_key].quota_units(q) for q in queries)
+    return await quota_status(state, provider_key, required)
+
+
+def _discovery_preflight(provider_key, queries, config):
+    """Return explainable OSM support and truthful ICP caveats before a run."""
+    from harvey.collectors.discover import OpenStreetMap
+
+    unsupported = []
+    if not queries:
+        unsupported.append({"term": "", "location": "", "status": "missing"})
+    if provider_key in ("osm", "geoapify"):
+        osm = OpenStreetMap()
+        for query in queries:
+            if not _discovery_category_supported(provider_key, query.term):
+                unsupported.append({"term": query.term, "location": query.location,
+                                    "status": "unsupported",
+                                    "suggestions": [term for term in osm.suggest_terms(query.term)
+                                                    if _discovery_category_supported(provider_key, term)]})
+    descriptions = [str(x).lower() for x in config.icp.industries]
+    broad_sme = any(any(phrase in x for phrase in (
+        "branchenübergreifend", "alle branchen", "kmu", "kleine und mittlere unternehmen",
+        "all industries", "sme")) for x in descriptions)
+    size = str(config.icp.company_size or "").lower()
+    size_claim = any(x in size for x in ("500", "unter", "under", "fewer than"))
+    warnings = []
+    if provider_key in ('osm', 'geoapify'):
+        from harvey.collectors.parking import parking_intent
+        intents = [parking_intent(q.term) for q in queries]
+        if any(intent is not None and intent.operators for intent in intents):
+            warnings.append({
+                'code': 'parking_operator_evidence', 'status': 'warning',
+                'message': 'Only explicitly recorded parking operators are returned. Coverage may be incomplete. Facility contact details are not assigned to the operator; the search area refers to its parking locations, not its headquarters.',
+            })
+        if any(intent is not None and not intent.operators for intent in intents):
+            warnings.append({
+                'code': 'parking_facilities', 'status': 'warning',
+                'message': 'This search returns parking facilities, not necessarily operator companies. Use Parking operators to look for explicitly recorded operators.',
+            })
+    if broad_sme:
+        warnings.append({"code": "broad_sme", "status": "warning"})
+    if size_claim:
+        warnings.append({"code": "company_size_unverified", "status": "unknown"})
+    return {"unsupported": unsupported, "warnings": warnings,
+            "can_run": not unsupported}
+
+
+@app.get('/api/discover/locations')
+async def discovery_locations(q: str = Query('', max_length=200), lang: str = Query('de', pattern='^(de|en)$')):
+    from harvey.config import load_env
+    from harvey.collectors.location_suggestions import suggest_locations
+    state = _state()
+    await state.init_db()
+    return await suggest_locations(state, q.strip(), lang, load_env().geoapify_api_key)
+
+
+@app.get('/api/discover/progress')
+async def get_discovery_progress():
+    from harvey.discovery_progress import KEY, progress_view
+    state = _state()
+    await state.init_db()
+    raw = await state.get_setting(KEY)
+    running = bool(_discovery_task and not _discovery_task.done())
+    progress = progress_view(json.loads(raw) if raw else None, running)
+    if progress:
+        progress['stop_requested'] = bool(running and await state.get_setting('discovery_paused'))
+    return {'progress': progress}
 
 
 @app.get("/api/discover/providers")
 async def get_discovery_providers():
     """What each source does, what it costs, and whether it's ready to use."""
     try:
-        from harvey.collectors.discover import DEFAULT_PROVIDER, provider_menu
-        from harvey.config import load_env
+        from harvey.collectors.discover import DEFAULT_PROVIDER, PROVIDERS, provider_menu
+        from harvey.config import load_config, load_env
 
+        config = load_config()
         state = _state()
         await state.init_db()
+        from harvey.collectors.discovery_quota import quota_status
+        providers = provider_menu(load_env().model_dump())
+        from harvey.discovery_catalog import term_catalog
+        for item in providers:
+            item["quota"] = await quota_status(state, item["key"])
         return {
-            "providers": provider_menu(load_env().model_dump()),
+            "providers": providers,
             "default": DEFAULT_PROVIDER,
             "selected": await state.get_setting("discovery_provider") or DEFAULT_PROVIDER,
             "paused": await state.get_setting("discovery_paused"),
             "running": bool(_discovery_task and not _discovery_task.done()),
             "last_report": _discovery_report,
+            "default_terms": (getattr(config.icp, "discovery_terms", []) or
+                              config.icp.industries or [config.product.name]),
+            "default_locations": config.icp.geography,
+            'term_catalog': {key: term_catalog(key, _discovery_category_supported) for key in PROVIDERS},
+            'location_autocomplete': bool(load_env().geoapify_api_key),
+            "suggested_terms": (PROVIDERS["osm"].SUGGESTED_TERMS
+                                if "osm" in PROVIDERS else []),
+            "supported_terms": {key: [term for term in PROVIDERS["osm"].SUGGESTED_TERMS
+                                     if _discovery_category_supported(key, term)]
+                                for key in ("osm", "geoapify")},
         }
     except Exception as e:
         logger.exception("discovery providers failed")
@@ -883,20 +1441,48 @@ async def estimate_discovery(request: Request):
             return JSONResponse({"error": f"unknown provider {provider!r}"},
                                 status_code=400)
 
-        queries = _discovery_queries(body, load_config())
+        config = load_config()
+        queries = _discovery_queries(body, config)
+        preflight = _discovery_preflight(provider, queries, config)
+        state = _state()
+        await state.init_db()
+        if provider == 'google_maps':
+            from harvey.collectors.google_maps import browser_available
+            if not await browser_available():
+                preflight['can_run'] = False
+                preflight['warnings'].append({'message': 'Chromium is missing. Run bash scripts/install-maps-browser.sh in the project terminal.'})
+        quota = await _discovery_quota(state, provider, queries)
+        if quota and not quota["can_run"]:
+            preflight["can_run"] = False
         return {
             "provider": provider,
             "queries": [q.keyword() for q in queries],
-            "query_count": len(queries),
+            "query_details": [{"term": q.term, "location": q.location,
+                               "keyword": q.keyword(),
+                               "status": ("unsupported" if not _discovery_category_supported(provider, q.term)
+                                          else "supported" if provider in ("osm", "geoapify")
+                                          else "provider_query")}
+                              for q in queries],
+            "query_count": len(queries) * (9 if provider == 'google_maps' and body.get('maps_mode') == 'grid' else 1),
+            "max_results": sum(q.limit for q in queries) * (9 if provider == 'google_maps' and body.get('maps_mode') == 'grid' else 1),
             "estimated_cost": round(estimate_cost(provider, queries), 4),
             "free": PROVIDERS[provider].estimate(queries) == 0,
+            "quota": quota,
+            **preflight,
         }
+    except (ValueError, TypeError) as e:
+        return JSONResponse({'error': str(e), 'success': False, 'message': str(e)}, status_code=422)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.post("/api/discover/run")
 async def start_discovery(request: Request):
+    async with _discovery_start_lock:
+        return await _start_discovery(request)
+
+
+async def _start_discovery(request: Request):
     """Kick off a run in the background and hand back immediately.
 
     Discovery takes minutes, not milliseconds — holding the request open
@@ -921,12 +1507,40 @@ async def start_discovery(request: Request):
 
         config = load_config()
         queries = _discovery_queries(body, config)
-        max_spend = float(body.get("max_spend") or 1.0)
+        preflight = _discovery_preflight(provider, queries, config)
+        if not preflight["can_run"]:
+            return JSONResponse({"success": False,
+                                 "message": ("Bitte mindestens einen Suchbegriff eingeben." if
+                                             any(x["status"] == "missing" for x in preflight["unsupported"])
+                                             else "Diese Datenquelle unterstützt einzelne Suchbegriffe nicht."),
+                                 **preflight}, status_code=422)
+        max_spend = float(body.get("max_spend", 1.0))
 
         state = _state()
         await state.init_db()
+        target_profile=None
+        if body.get('target_profile_id'):
+            from harvey.target_profiles import get_profile
+            if not isinstance(body['target_profile_id'],str) or len(body['target_profile_id'])>100:
+                raise ValueError('Invalid target profile')
+            target_profile=await get_profile(state,body['target_profile_id'])
+        quota = await _discovery_quota(state, provider, queries)
+        if quota and not quota["can_run"]:
+            return JSONResponse({"success": False, "message": "Free quota exhausted. No paid search was started.",
+                                 "quota": quota}, status_code=422)
         await state.set_setting("discovery_provider", provider)
         await state.set_setting("discovery_paused", "")
+
+        from harvey.discovery_progress import DiscoveryProgress
+        progress = DiscoveryProgress(state)
+        await progress.update({'search': {
+            'terms': list(dict.fromkeys(query.term for query in queries)),
+            'cities': list(dict.fromkeys(query.location for query in queries if query.location)),
+            'target_profile_id':body.get('target_profile_id',''),
+            'email_search': body.get('email_search', False), 'email_mode': body.get('email_mode','quick'),
+            'maps_mode': body.get('maps_mode', 'quick'), 'maps_filter': body.get('maps_filter', 'all'), 'maps_resume': body.get('maps_resume', True),
+            'locations': body.get('locations') or [], 'radius_km': body.get('radius_km', 40), 'query_count': len(queries) * (9 if provider == 'google_maps' and body.get('maps_mode') == 'grid' else 1),
+        }})
 
         async def _go():
             global _discovery_report
@@ -934,26 +1548,41 @@ async def start_discovery(request: Request):
                 # Discovery chains straight into profiling: reading the sites
                 # is free, and it is what makes the results worth anything.
                 result = await run_prospecting(state, config, provider, queries,
-                                               max_spend=max_spend)
+                                               max_spend=max_spend, on_progress=progress.update,
+                                               radius_km=body.get('radius_km', 40),
+                                               email_search=body.get('email_search',False), email_mode=body.get('email_mode','quick'),**({'target_profile':target_profile} if target_profile else {}))
                 _discovery_report = {
                     **(result.discover or {}),
                     "profiled_companies": result.profiled_companies,
                     "profile_observations": result.profile_observations,
                     "errors": result.errors,
+                    "email_summary": getattr(result, "email_summary", {}),
+                    "target_summary":getattr(result,"target_summary",{}),
                 }
+                paused = await state.get_setting('discovery_paused')
+                await progress.finish('stopped' if paused or (result.discover or {}).get('stopped') else
+                                      'completed_with_errors' if result.errors or progress.data['errors'] else 'completed')
             except Exception as exc:
                 logger.exception("discovery run failed")
                 _discovery_report = {"errors": [str(exc)], "stopped": "failed"}
+                await progress.finish('failed')
 
         _discovery_report = None
         _discovery_task = asyncio.create_task(_go())
-        return {"success": True, "queries": len(queries)}
+        return {"success": True, "queries": len(queries) * (9 if provider == "google_maps" and body.get("maps_mode") == "grid" else 1)}
+    except (ValueError, TypeError) as e:
+        return JSONResponse({'error': str(e), 'success': False, 'message': str(e)}, status_code=422)
     except Exception as e:
         return JSONResponse({"success": False, "message": str(e)}, status_code=500)
 
 
 @app.post("/api/profile/run")
 async def start_profile():
+    async with _discovery_start_lock:
+        return await _start_profile()
+
+
+async def _start_profile():
     """Read the websites of everything discovered but not yet looked at.
 
     Free and model-free, so there is nothing to estimate and no cap to set.
@@ -972,17 +1601,24 @@ async def start_profile():
         if not pending:
             return {"success": True, "pending": 0}
 
+        from harvey.discovery_progress import DiscoveryProgress
+        progress = DiscoveryProgress(state)
+        await progress.update({})
+        await state.set_setting('discovery_paused', '')
+
         async def _go():
             global _discovery_report
             try:
-                companies, observations, _ = await run_profile_stage(state, limit=200)
+                companies, observations, _ = await run_profile_stage(state, limit=200, on_progress=progress.update)
                 _discovery_report = {
                     "profiled_companies": companies,
                     "profile_observations": observations,
                 }
+                await progress.finish('stopped' if await state.get_setting('discovery_paused') else 'completed')
             except Exception as exc:
                 logger.exception("profile run failed")
                 _discovery_report = {"errors": [str(exc)], "stopped": "failed"}
+                await progress.finish('failed')
 
         _discovery_report = None
         _discovery_task = asyncio.create_task(_go())
@@ -1032,7 +1668,7 @@ async def get_today():
             "SELECT COUNT(*) AS n FROM conversations WHERE status = 'open'"
         )
         open_convos = convos[0]["n"] if convos else 0
-        companies = await query_db("SELECT COUNT(*) AS n FROM companies")
+        companies = await query_db("SELECT COUNT(*) AS n FROM companies WHERE removed_at IS NULL")
         n_companies = companies[0]["n"] if companies else 0
 
         unprofiled_count = await state.count_companies_needing_profile()
@@ -1046,7 +1682,7 @@ async def get_today():
             "unprofiled": unprofiled_count,
         }
 
-        # Ordered by how much it blocks Harvey from doing anything at all.
+        # Ordered by how much it blocks Siveron from doing anything at all.
         if paused:
             items.append({
                 "key": "paused", "tone": "bad",
@@ -1061,7 +1697,7 @@ async def get_today():
                        if c.get("required") and not c.get("done")]
             items.append({
                 "key": "setup", "tone": "warn",
-                "title": "Finish setting Harvey up",
+                "title": "Finish setting Siveron up",
                 "detail": ", ".join(missing[:3]) or "Some required steps are incomplete.",
                 "action": "Open setup", "tab": "settings",
             })
@@ -1072,7 +1708,7 @@ async def get_today():
                 "title": (f"{len(proposed)} signal waiting for your confirmation"
                           if len(proposed) == 1
                           else f"{len(proposed)} signals waiting for your confirmation"),
-                "detail": ("Harvey won't collect anything you haven't approved. "
+                "detail": ("Siveron won't collect anything you haven't approved. "
                            "Confirm which signals define a good prospect for you."),
                 "action": "Review signals", "tab": "signals",
             })
@@ -1118,17 +1754,23 @@ async def get_today():
                 "key": "replies", "tone": "good",
                 "title": (f"{open_convos} live conversation" if open_convos == 1
                           else f"{open_convos} live conversations"),
-                "detail": "People replied. Check how Harvey is handling them.",
+                "detail": "People replied. Check how Siveron is handling them.",
                 "action": "Read conversations", "tab": "conversations",
             })
 
-        return {"items": items, "stats": stats}
+        from harvey.work_items import work_items
+        operations=await work_items(state,await _delivery_assessment_context(state))
+        items=[i for i in items if i['key'] not in ('outbox','replies') and not(i['key']=='paused' and any(t['kind']=='blocked' for t in operations['items']))]
+        async with state._connect() as db:
+            for status,key in [('pending_review','outbox_pending'),('approved','outbox_approved')]:
+                stats[key]=(await (await db.execute('SELECT COUNT(*) FROM outbox WHERE status=?',(status,))).fetchone())[0]
+        return {"items": items, "stats": stats,"work_total":operations['total']}
     except Exception as e:
         logger.exception("today load failed")
         return {"items": [], "stats": stats, "error": str(e)}
 
 
-# ── Signals: Harvey proposes, the user confirms ──
+# ── Signals: Siveron proposes, the user confirms ──
 #
 # Nothing is collected until a human has said yes to it. This is the gate the
 # whole prospecting pipeline hangs off: collectors ask `state.confirmed_signal_codes()`
@@ -1137,7 +1779,7 @@ async def get_today():
 CATEGORY_META = {
     "discovery": {
         "label": "Discovery — who exists",
-        "blurb": "How Harvey finds businesses at all, and how visible they are. "
+        "blurb": "How Siveron finds businesses at all, and how visible they are. "
                  "This is the only stage that costs money.",
     },
     "profile": {
@@ -1269,7 +1911,7 @@ async def preview_cohort(request: Request):
         placeholders = ",".join("?" for _ in ids[:200])
         rows = await query_db(
             f"SELECT id, name, domain, industry, location FROM companies "
-            f"WHERE id IN ({placeholders})",
+            f"WHERE removed_at IS NULL AND id IN ({placeholders})",
             tuple(ids[:200]),
         )
         return {"size": len(ids), "companies": rows}
@@ -1332,6 +1974,92 @@ def start_dashboard(host: str = "127.0.0.1", port: int = 5555):
     """Start the dashboard server."""
     import uvicorn
 
-    print(f"\n  Harvey Dashboard running at http://{host}:{port}")
+    print(f"\n  Siveron Dashboard running at http://{host}:{port}")
     print("  Press Ctrl+C to stop.\n")
     uvicorn.run(app, host=host, port=port, log_level="warning")
+
+# Focused, local CRM endpoints. Registration has no external side effects.
+from harvey.crm_routes import install_crm_routes
+install_crm_routes(app, _state, query_db, _read_env_file)
+
+
+@app.get('/api/campaign-readiness')
+async def campaign_readiness():
+    """Explain remaining sending setup without blocking local draft/review work."""
+    notices=[]
+    try:
+        with open(_resolve_config_file()) as stream:
+            cfg=yaml.safe_load(stream) or {}
+        email=((cfg.get('channels') or {}).get('email') or {})
+        if not email.get('enabled',False):
+            notices.append('E-Mail-Versand ist deaktiviert.')
+        if email.get('max_daily_sends',0)<=0:
+            notices.append('Das tägliche Versandlimit steht auf 0.')
+        if email.get('provider','instantly') not in ('smtp','gmail'):
+            notices.append('Dieser Freigabeablauf benötigt SMTP oder Gmail als Versandweg.')
+        setup=await get_setup_status()
+        if any(c['id']=='email_provider' and not c['done'] for c in setup.get('checks',[])):
+            notices.append('Das Versandpostfach muss noch eingerichtet werden.')
+        sm=_state()
+        await sm.init_db()
+        if await sm.get_setting('sending_paused'):
+            notices.append('Der Versand ist pausiert.')
+    except Exception:
+        notices.append('Versandeinstellungen konnten nicht vollständig geprüft werden. Bitte Einstellungen öffnen.')
+    return {'notices':notices}
+
+
+_sending_config_lock = asyncio.Lock()
+
+
+@app.get('/api/settings/sending')
+async def get_sending_settings():
+    from harvey.sending_settings import read_sending_settings
+    try:
+        result=read_sending_settings(_resolve_config_file())
+        result['agent_running']=_check_harvey_pid() is not None
+        return result
+    except Exception:
+        return JSONResponse({'error':'Versandeinstellungen konnten nicht gelesen werden.'},status_code=422)
+
+
+@app.post('/api/settings/sending')
+async def update_sending_settings(request:Request):
+    from harvey.sending_settings import save_sending_settings, SendingSettingsError
+    try:
+        payload=await request.json()
+        async with _sending_config_lock:
+            if _check_harvey_pid() is not None:
+                return JSONResponse({'error':'Bitte den Agenten im Reiter Steuerung zuerst anhalten und danach erneut speichern.'},status_code=409)
+            result=save_sending_settings(_resolve_config_file(),payload)
+        return dict(result,success=True)
+    except (ValueError,SendingSettingsError):
+        return JSONResponse({'error':'Ungültige oder veraltete Einstellungen. Bitte neu laden und Status sowie Tageslimit prüfen.'},status_code=422)
+    except OSError:
+        return JSONResponse({'error':'Die Versandeinstellungen konnten nicht gespeichert werden.'},status_code=500)
+
+from harvey.target_profiles import install_target_profile_routes
+install_target_profile_routes(app, _state)
+
+from harvey.campaign_results import install_result_routes
+from harvey.work_items import install_work_routes
+install_result_routes(app,_state)
+install_work_routes(app,_state,_delivery_assessment_context)
+
+from harvey.sales_workflows import install_sales_routes
+install_sales_routes(app,_state)
+
+from harvey.company_field_review import install_field_review_routes
+install_field_review_routes(app, _state)
+
+from harvey.assistant import install_assistant_routes
+install_assistant_routes(app, _state)
+
+from harvey.decision_makers import install_decision_maker_routes
+install_decision_maker_routes(app, _state, _company_people_jobs)
+
+from harvey.contact_research import install_contact_research_routes
+install_contact_research_routes(app, _state)
+
+from harvey.company_reports import install_report_routes
+install_report_routes(app, _state)

@@ -1,4 +1,4 @@
-"""Configuration loader for Harvey. Reads harvey.yaml + .env."""
+"""Configuration loader for Siveron. Reads harvey.yaml + .env."""
 
 import logging
 import os
@@ -16,7 +16,7 @@ logger = logging.getLogger("harvey.config")
 
 
 class ConfigError(Exception):
-    """Raised when Harvey's configuration is missing or invalid."""
+    """Raised when Siveron's configuration is missing or invalid."""
 
 
 class ConfigFileNotFoundError(ConfigError, FileNotFoundError):
@@ -54,6 +54,9 @@ class ProductConfig(BaseModel):
 
 class ICPConfig(BaseModel):
     industries: list[str]
+    # Concrete provider queries are separate from descriptive ICP segments.
+    # Empty keeps legacy configs working by falling back to `industries`.
+    discovery_terms: list[str] = []
     company_size: str
     titles: list[str]
     geography: list[str]
@@ -162,17 +165,20 @@ _MODEL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,127}$")
 
 
 class BrainConfig(BaseModel):
-    """Which subscription Harvey thinks with.
+    """Which subscription Siveron thinks with.
 
     ``claude`` (default) runs Claude Code headless on your Claude plan.
     ``codex`` runs Codex on your ChatGPT plan. There is never an automatic
-    fallback between them, and an explicit ``model`` only affects Harvey —
+    fallback between them, and an explicit ``model`` only affects Siveron —
     your own Claude Code / Codex settings are never read or changed.
     """
 
     provider: str = "claude"
     model: str = ""  # empty = the provider's own default
     reasoning_effort: str = ""  # codex only; empty = model default
+    # Local compatibility mode for a separately verified code-mode model.
+    # This never enables host tools or accepts tool calls from the model.
+    codex_restricted_text: bool = False
 
     @field_validator("provider", mode="before")
     @classmethod
@@ -224,6 +230,8 @@ class EnvConfig(BaseModel):
     linkedin_password: str = ""
     hunter_api_key: str = ""
     serper_api_key: str = ""
+    geoapify_api_key: str = ""
+    serpapi_api_key: str = ""
     reoon_api_key: str = ""
     zerobounce_api_key: str = ""
     # Native mail providers (channels.email.provider: gmail | smtp)
@@ -249,7 +257,7 @@ def _format_validation_error(e: ValidationError) -> str:
 
 
 def load_config(config_path: str | None = None) -> HarveyConfig:
-    """Load Harvey configuration from YAML file.
+    """Load Siveron configuration from YAML file.
 
     Raises ConfigError with a clear, actionable message on any problem.
     """
@@ -270,7 +278,7 @@ def load_config(config_path: str | None = None) -> HarveyConfig:
         raise ConfigError(f"Could not read {config_path}: {e}")
 
     if data is None:
-        raise ConfigError(f"{config_path} is empty. Run 'harvey setup' to configure Harvey.")
+        raise ConfigError(f"{config_path} is empty. Run 'harvey setup' to configure Siveron.")
     if not isinstance(data, dict):
         raise ConfigError(
             f"{config_path} must contain a YAML mapping (key: value pairs), "
@@ -335,6 +343,8 @@ def load_env() -> EnvConfig:
         linkedin_password=os.getenv("LINKEDIN_PASSWORD", "").strip(),
         hunter_api_key=os.getenv("HUNTER_API_KEY", "").strip(),
         serper_api_key=os.getenv("SERPER_API_KEY", "").strip(),
+        geoapify_api_key=os.getenv("GEOAPIFY_API_KEY", "").strip(),
+        serpapi_api_key=os.getenv("SERPAPI_API_KEY", "").strip(),
         reoon_api_key=os.getenv("REOON_API_KEY", "").strip(),
         zerobounce_api_key=os.getenv("ZEROBOUNCE_API_KEY", "").strip(),
         gmail_client_id=os.getenv("GMAIL_CLIENT_ID", "").strip(),
@@ -352,7 +362,7 @@ def load_env() -> EnvConfig:
 
 
 def _find_config_file() -> str:
-    """Search for Harvey's config.
+    """Search for Siveron's config.
 
     ``harvey.local.yaml`` wins when present. It is gitignored, so a fork can
     carry a real product configuration (trained on an actual company) while

@@ -35,6 +35,8 @@ class PipelineReport:
     profile_run_id: str = ""
     skipped: str = ""
     errors: list[str] = field(default_factory=list)
+    email_summary: dict = field(default_factory=dict)
+    target_summary: dict = field(default_factory=dict)
 
     def as_dict(self) -> dict:
         return {
@@ -43,7 +45,7 @@ class PipelineReport:
             "profile_observations": self.profile_observations,
             "profile_run_id": self.profile_run_id,
             "skipped": self.skipped,
-            "errors": self.errors,
+            "errors": self.errors, "email_summary": self.email_summary, "target_summary":self.target_summary,
         }
 
     def summary_line(self) -> str:
@@ -60,6 +62,7 @@ async def run_profile_stage(
     state,
     limit: int = 100,
     stale_days: int = PROFILE_STALE_DAYS,
+    on_progress=None,
 ) -> tuple[int, int, str]:
     """Profile whatever currently needs it.
 
@@ -71,12 +74,19 @@ async def run_profile_stage(
 
     pending = await state.companies_needing_profile(limit=limit,
                                                     stale_days=stale_days)
+    if on_progress:
+        await on_progress({'stage': 'profiling', 'total': len(pending), 'completed': 0, 'current': ''})
     if not pending:
         return 0, 0, ""
 
     logger.info("profile: %d companies need a look", len(pending))
-    observations, run_id = await profile_companies(state, pending)
-    return len(pending), observations, run_id
+    processed = 0
+    async def tracked(event):
+        nonlocal processed
+        processed = event.get('completed', processed)
+        await on_progress(event)
+    observations, run_id = await profile_companies(state, pending, **({'on_progress': tracked} if on_progress else {}))
+    return processed if on_progress else len(pending), observations, run_id
 
 
 async def run_prospecting(
@@ -88,6 +98,11 @@ async def run_prospecting(
     profile: bool = True,
     profile_limit: int = 200,
     dry_run: bool = False,
+    on_progress=None,
+    radius_km=None,
+    email_search=False,
+    email_mode="quick",
+    target_profile=None,
 ) -> PipelineReport:
     """Discover businesses, then read what their websites say about them.
 
@@ -102,6 +117,7 @@ async def run_prospecting(
     discovery = await run_discovery(
         state, config, provider or DEFAULT_PROVIDER, queries,
         max_spend=max_spend, dry_run=dry_run,
+        **({'on_progress': on_progress, 'radius_km': radius_km} if on_progress or radius_km else {}),
     )
     report.discover = discovery.as_dict()
     report.errors.extend(discovery.errors)
@@ -109,20 +125,62 @@ async def run_prospecting(
     if dry_run:
         report.skipped = "dry run"
         return report
-    if not profile:
+    if not profile and not email_search and not target_profile:
         report.skipped = "profiling skipped"
+        return report
+
+    if discovery.stopped or await state.get_setting('discovery_paused'):
+        report.skipped = discovery.stopped or 'paused'
         return report
 
     # Profile runs even when discovery found nothing new: a previous run may
     # have been interrupted, and observations go stale on a schedule.
-    try:
-        companies, observations, run_id = await run_profile_stage(
-            state, limit=profile_limit)
-        report.profiled_companies = companies
-        report.profile_observations = observations
-        report.profile_run_id = run_id
-    except Exception as e:
-        logger.exception("profile stage failed")
-        report.errors.append(f"profile: {e}")
+    if profile:
+        try:
+            companies, observations, run_id = await run_profile_stage(
+                state, limit=profile_limit, **({'on_progress': on_progress} if on_progress else {}))
+            report.profiled_companies = companies
+            report.profile_observations = observations
+            report.profile_run_id = run_id
+        except Exception as e:
+            logger.exception("profile stage failed")
+            report.errors.append(f"profile: {e}")
 
+    if target_profile:
+        from harvey.target_profiles import evaluate_profile
+        ids=list(dict.fromkeys((report.discover or {}).get('company_ids',[])))
+        report.target_summary=await evaluate_profile(state,target_profile,company_ids=ids)
+        if on_progress:
+            await on_progress({'target_summary':report.target_summary})
+
+    if email_search:
+        from harvey.collectors.company_contacts import lookup_company_emails
+        import asyncio
+        ids = list(dict.fromkeys((report.discover or {}).get('company_ids', [])))
+        summary = {'total': min(len(ids),1000), 'done':0, 'found':0, 'not_found':0,
+                   'no_website':0, 'failed':0, 'skipped_limit':max(0,len(ids)-1000), 'stopped':False}
+        report.email_summary = summary
+        if on_progress:
+            await on_progress({'stage':'emails','total':summary['total'],'completed':0,'current':'','email_summary':dict(summary)})
+        for company_id in ids[:1000]:
+            if await state.get_setting('discovery_paused'):
+                summary['stopped'] = True
+                break
+            company = await state.get_company(company_id)
+            if on_progress:
+                await on_progress({'current':company.name if company else ''})
+            try:
+                result = await asyncio.wait_for(lookup_company_emails(company,state,mode=email_mode),
+                    timeout=80 if email_mode == 'thorough' else 25) if company else {'status':'failed'}
+                status = result['status']
+                status = status if status in ('found','not_found','no_website') else 'failed'
+            except Exception:
+                status = 'failed'
+            summary[status] += 1
+            summary['done'] += 1
+            if status == 'failed':
+                report.errors.append(f'email lookup failed: {company_id}')
+            if on_progress:
+                await on_progress({'completed':summary['done'],'email_summary':dict(summary),
+                                   **({'error':True} if status == 'failed' else {})})
     return report

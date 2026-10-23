@@ -12,7 +12,7 @@ def test_config_from_dict():
     """HarveyConfig can be constructed from a dict (YAML-like)."""
     data = {
         "persona": {
-            "name": "Harvey",
+            "name": "Siveron",
             "company": "Acme",
             "role": "BDR",
             "email": "harvey@acme.com",
@@ -34,9 +34,10 @@ def test_config_from_dict():
         },
     }
     config = HarveyConfig(**data)
-    assert config.persona.name == "Harvey"
+    assert config.persona.name == "Siveron"
     assert config.product.name == "Widget"
     assert config.icp.industries == ["SaaS"]
+    assert config.icp.discovery_terms == []  # legacy configurations remain valid
     assert config.channels.email.max_daily_sends == 50  # default
     assert config.usage.heartbeat_interval_minutes == 15  # default
 

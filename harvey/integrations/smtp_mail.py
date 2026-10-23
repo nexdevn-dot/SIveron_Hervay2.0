@@ -9,8 +9,8 @@ a Google Workspace account with an app password, or self-hosted mail.
     SMTP_USERNAME=        IMAP_USERNAME=   (defaults to SMTP_USERNAME)
     SMTP_PASSWORD=        IMAP_PASSWORD=   (defaults to SMTP_PASSWORD)
 
-Sends as the configured persona (name + email). IMAP polling fetches
-UNSEEN inbox messages and marks them seen after retrieval.
+Sends as the configured persona (name + email). IMAP polling reads recent
+messages, including already read replies, without changing mailbox flags.
 """
 
 import asyncio
@@ -57,6 +57,8 @@ class SmtpImapProvider(MailProvider):
         body: str,
         thread_ref: str = "",
         in_reply_to: str = "",
+        html_body: str = "",
+        attachments: list[dict] | None = None,
     ) -> SendResult:
         persona = self.config.persona
         msg = EmailMessage()
@@ -68,7 +70,8 @@ class SmtpImapProvider(MailProvider):
         if in_reply_to:
             msg["In-Reply-To"] = in_reply_to
             msg["References"] = in_reply_to
-        msg.set_content(body)
+        from harvey.integrations.mail_provider import set_message_content
+        set_message_content(msg,body,html_body,attachments)
 
         try:
             await aiosmtplib.send(
@@ -89,26 +92,36 @@ class SmtpImapProvider(MailProvider):
     async def get_replies(self, limit: int = 50) -> list[InboundMessage]:
         loop = asyncio.get_event_loop()
         try:
-            return await loop.run_in_executor(None, self._fetch_unseen, limit)
-        except Exception as e:
-            logger.error(f"IMAP fetch failed: {e}")
-            return []
+            return await loop.run_in_executor(None, self._fetch_recent, limit)
+        except Exception:
+            # An unreadable mailbox is not an empty mailbox. The caller must
+            # withhold follow-ups when stop-on-reply could not be checked.
+            logger.error("IMAP fetch failed; mailbox could not be checked.")
+            raise RuntimeError("IMAP mailbox could not be read. Check the connection and login.") from None
 
-    def _fetch_unseen(self, limit: int) -> list[InboundMessage]:
+    def _fetch_recent(self, limit: int) -> list[InboundMessage]:
         out: list[InboundMessage] = []
-        conn = imaplib.IMAP4_SSL(self.imap_host, self.imap_port)
+        if limit <= 0:
+            return out
+        conn = imaplib.IMAP4_SSL(self.imap_host, self.imap_port, timeout=20)
         try:
             conn.login(self.imap_user, self.imap_pass)
-            conn.select("INBOX")
-            status, data = conn.search(None, "UNSEEN")
+            status, _ = conn.select("INBOX", readonly=True)
             if status != "OK":
-                return []
+                raise RuntimeError("IMAP inbox selection failed")
+            status, data = conn.uid('search', None, "ALL")
+            if status != "OK":
+                raise RuntimeError("IMAP inbox search failed")
             ids = data[0].split()[-limit:]
-            for msg_id in ids:
-                status, parts = conn.fetch(msg_id, "(RFC822)")
-                if status != "OK" or not parts or not isinstance(parts[0], tuple):
+            if not ids:
+                return out
+            status, parts = conn.uid('fetch', b','.join(ids), "(BODY.PEEK[])")
+            if status != "OK":
+                raise RuntimeError("IMAP message fetch failed")
+            for part in parts or []:
+                if not isinstance(part, tuple):
                     continue
-                parsed = self._parse_rfc822(parts[0][1])
+                parsed = self._parse_rfc822(part[1])
                 if parsed:
                     out.append(parsed)
         finally:
@@ -151,6 +164,7 @@ class SmtpImapProvider(MailProvider):
             thread_ref=str(msg.get("In-Reply-To", "")).strip(),
             date=str(msg.get("Date", "")),
             is_bounce=looks_like_bounce(from_email, subject),
+            headers={'references': str(msg.get('References', '')).strip()},
         )
 
     async def test_connection(self) -> tuple[bool, str]:

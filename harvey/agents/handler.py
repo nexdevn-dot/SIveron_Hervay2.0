@@ -9,6 +9,7 @@ sending domain while nobody's watching.
 
 import logging
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 from harvey.brain import Brain, BrainUnavailable
 from harvey.config import HarveyConfig, EnvConfig
@@ -253,7 +254,9 @@ class Handler:
                 intent=intent,
                 status="open",
             )
-        convo.thread.append(Message(sender="prospect", content=reply_text))
+        receipt = (reply_meta or {}).get('provider_id', '')
+        if not receipt or not any(m.provider_id == receipt for m in convo.thread):
+            convo.thread.append(Message(sender="prospect", content=reply_text, provider_id=receipt))
         convo.intent = intent
         old_stage = convo.stage
         convo.stage = self._determine_stage(intent, convo.stage, reply_text)
@@ -281,6 +284,8 @@ class Handler:
             # Honor opt-outs ALWAYS. No reply, no future contact.
             await self.state.update_conversation(convo.id, status="closed", stage="closed_lost")
             await self.state.update_prospect_status(prospect.id, "opted_out")
+            from harvey.crm import set_contact_block
+            await set_contact_block(self.state,prospect.id,True,'Abmeldung durch Empfänger',source='opt_out')
             await self.state.log_action(
                 action_type="opt_out",
                 agent="handler",
@@ -315,6 +320,9 @@ class Handler:
             logger.info(f"Handler: {lead_email} is OOO. Will follow up later.")
             return
 
+        if await self.state.is_contact_suppressed(prospect.id,lead_email):
+            await self.state.update_conversation(convo.id,status='needs_human')
+            return
         if intent not in AUTO_REPLY_INTENTS:
             logger.warning(f"Handler: No auto-reply policy for intent '{intent}'. Skipping reply.")
             return
@@ -343,6 +351,8 @@ class Handler:
                 response, prospect, convo, reply_meta or {}, intent
             )
         elif reply_uuid:
+            if await self.state.is_contact_suppressed(prospect.id,lead_email):
+                return
             result = await self.instantly.send_reply(reply_uuid, response)
             if result is not None:
                 # Add our response to conversation
@@ -364,6 +374,54 @@ class Handler:
                 )
 
     # ── Native provider path (Gmail / SMTP) ──
+
+    async def check_reply_safety(self) -> bool:
+        """Read bounces/stop-on-reply without classifying or drafting with AI.
+
+        Human replies stay unprocessed for the normal handler's later cycle.
+        Any unreadable mailbox or failed cancellation holds all outgoing mail.
+        """
+        if not self.config.channels.email.enabled or not self.is_native:
+            return False
+        if not self.provider.is_configured():
+            return False
+        try:
+            inbound = await self.provider.get_replies()
+            for msg in inbound:
+                key = msg.provider_id or msg.message_id
+                if key and await self.state.is_reply_processed(key):
+                    continue
+                if msg.is_bounce:
+                    await self._handle_bounce(msg)
+                    if key:
+                        await self.state.mark_reply_processed(key)
+                    continue
+                prospect = await self.state.get_prospect_by_email(msg.from_email)
+                if not prospect:
+                    continue
+                await self.state.update_prospect_status(prospect.id, 'replied')
+                await self.state.cancel_pending_outbox_for_prospect(prospect.id)
+                await self.record_inbound_reply(msg, prospect.id)
+                if any(phrase in msg.body.lower() for phrase in OPT_OUT_PATTERNS):
+                    from harvey.crm import set_contact_block
+                    await set_contact_block(self.state,prospect.id,True,'Abmeldung durch Empfänger',source='opt_out')
+            return True
+        except Exception:
+            logger.exception('Handler: mailbox safety check failed; approved messages wait.')
+            return False
+
+    async def record_inbound_reply(self, msg, prospect_id):
+        """Inbox capture only: never classify, draft, approve, or send."""
+        timestamp = None
+        try:
+            timestamp = parsedate_to_datetime(msg.date)
+            if timestamp.tzinfo:
+                timestamp = timestamp.astimezone(timezone.utc).replace(tzinfo=None)
+        except (ValueError, TypeError, AttributeError):
+            pass
+        return await self.state.record_inbound_reply(
+            prospect_id, msg.provider_id or msg.message_id, msg.body.strip(), timestamp,
+        )
 
     async def _run_native(self) -> bool:
         """Poll the mailbox, split bounces from human replies, handle both.
@@ -399,6 +457,7 @@ class Handler:
                             "thread_ref": msg.thread_ref,
                             "message_id": msg.message_id,
                             "subject": msg.subject,
+                            "provider_id": dedup_key,
                         },
                     )
                 handled += 1
@@ -408,6 +467,7 @@ class Handler:
                 logger.error(f"Handler: stopping; replies are left for later ({e}).")
                 break
             except Exception as e:
+                consumed = False
                 logger.error(f"Handler: error processing {msg.from_email}: {e}")
                 complete = False
             finally:
@@ -469,7 +529,7 @@ class Handler:
     async def _queue_native_reply(
         self, response: str, prospect, convo, reply_meta: dict, intent: str
     ):
-        """Route Harvey's reply through the outbox (approval ladder applies)."""
+        """Route Siveron's reply through the outbox (approval ladder applies)."""
         require_approval = getattr(
             self.config.channels.email, "require_approval", True
         )
@@ -594,7 +654,7 @@ Respond with ONLY the category label, nothing else."""
         """Generate an appropriate response based on intent."""
         # Build conversation history for context
         history = "\n".join(
-            f"{'Harvey' if m.sender == 'harvey' else prospect.full_name()}: {m.content}"
+            f"{'Siveron' if m.sender == 'harvey' else prospect.full_name()}: {m.content}"
             for m in convo.thread[-6:]  # Last 6 messages for context
         )
 

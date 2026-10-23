@@ -71,6 +71,8 @@ class Writer:
             )
             return
 
+        prospects_with_email = [p for p in prospects_with_email if not await self.state.is_contact_suppressed(p.id,p.email)]
+
         # Batch prospects into campaign groups (by industry/title for relevance)
         batches = self._group_prospects(prospects_with_email)
 

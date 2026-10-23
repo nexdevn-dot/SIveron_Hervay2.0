@@ -1,4 +1,4 @@
-"""SQLite state manager. All of Harvey's memory lives here.
+"""SQLite state manager. All of Siveron's memory lives here.
 
 Concurrency: the DB runs in WAL mode (set persistently at init) so the
 dashboard can read while the agent writes. Every connection gets a busy
@@ -10,9 +10,10 @@ upgrade cleanly in place.
 """
 
 import json
+import sqlite3
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timezone, timedelta
 from pathlib import Path
 
 import aiosqlite
@@ -295,7 +296,7 @@ MIGRATIONS: list[str] = [
     -- The governed vocabulary. A collector may only emit a code that exists
     -- here (enforced by the observations FK), so a typo fails loudly instead
     -- of quietly inventing a junk signal. `status` is the user-confirmation
-    -- gate: Harvey PROPOSES signals, the user confirms which ones to
+    -- gate: Siveron PROPOSES signals, the user confirms which ones to
     -- prospect against, and only confirmed signals get collected.
     CREATE TABLE IF NOT EXISTS signal_codes (
         code TEXT PRIMARY KEY,
@@ -413,7 +414,234 @@ MIGRATIONS: list[str] = [
     -- so one subscription's budget never consumes the other's.
     ALTER TABLE usage_log ADD COLUMN codex_calls INTEGER DEFAULT 0;
     """,
+    # Public company inboxes are not people, verified addresses or send approvals.
+    """
+    CREATE TABLE IF NOT EXISTS company_public_emails (
+        company_id TEXT NOT NULL REFERENCES companies(id),
+        email TEXT NOT NULL,
+        source_url TEXT NOT NULL DEFAULT '',
+        found_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (company_id, email)
+    );
+    """,
+    """
+    ALTER TABLE company_public_emails ADD COLUMN validation_json TEXT NOT NULL DEFAULT '{}';
+    ALTER TABLE company_public_emails ADD COLUMN checked_at TEXT;
+    """,
+    """
+    CREATE TABLE company_email_jobs (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        stop_requested INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE company_email_job_items (
+        job_id TEXT NOT NULL REFERENCES company_email_jobs(id),
+        company_id TEXT NOT NULL REFERENCES companies(id),
+        status TEXT NOT NULL,
+        PRIMARY KEY(job_id, company_id)
+    );
+    """,
+    """
+    ALTER TABLE companies ADD COLUMN removed_at TEXT;
+    ALTER TABLE companies ADD COLUMN cleanup_batch TEXT;
+    CREATE INDEX idx_companies_removed ON companies(removed_at);
+    """,
+    """
+    ALTER TABLE prospects ADD COLUMN contact_type TEXT NOT NULL DEFAULT 'person';
+    ALTER TABLE prospects ADD COLUMN source_found_at TEXT NOT NULL DEFAULT '';
+    CREATE TABLE person_candidates (
+        id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id),
+        first_name TEXT NOT NULL, last_name TEXT NOT NULL, title TEXT NOT NULL DEFAULT '',
+        email TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '',
+        source_url TEXT NOT NULL, found_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        status TEXT NOT NULL DEFAULT 'pending', prospect_id TEXT NOT NULL DEFAULT ''
+    );
+    CREATE TABLE company_people_jobs (
+        id TEXT PRIMARY KEY, status TEXT NOT NULL, stop_requested INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE company_people_job_items (
+        job_id TEXT NOT NULL REFERENCES company_people_jobs(id),
+        company_id TEXT NOT NULL REFERENCES companies(id), status TEXT NOT NULL,
+        PRIMARY KEY(job_id, company_id)
+    );
+    """,
+    """
+    ALTER TABLE prospects ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE prospects ADD COLUMN do_not_contact INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE prospects ADD COLUMN block_reason TEXT NOT NULL DEFAULT '';
+    ALTER TABLE prospects ADD COLUMN blocked_at TEXT NOT NULL DEFAULT '';
+    CREATE TABLE contact_suppressions (
+        email TEXT PRIMARY KEY, prospect_id TEXT NOT NULL,
+        reason TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'manual',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    UPDATE prospects SET do_not_contact=1,block_reason='Abmeldung',blocked_at=COALESCE(updated_at,'') WHERE status='opted_out';
+    INSERT OR IGNORE INTO contact_suppressions(email,prospect_id,reason,source)
+        SELECT lower(email),id,'Abmeldung','opt_out' FROM prospects WHERE status='opted_out' AND email != '';
+    CREATE TABLE campaign_pause_requests (
+        campaign_id TEXT PRIMARY KEY, remote_id TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    ALTER TABLE campaigns ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE campaigns ADD COLUMN brief_json TEXT NOT NULL DEFAULT '{}';
+    """,
+    # Reversible contact deletion: retained history and suppression rules.
+    """
+    CREATE TABLE contact_trash (
+        prospect_id TEXT PRIMARY KEY,
+        previous_status TEXT NOT NULL,
+        previous_blocked INTEGER NOT NULL,
+        previous_reason TEXT NOT NULL,
+        previous_blocked_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    """,
+    """
+    ALTER TABLE outbox ADD COLUMN body_html TEXT NOT NULL DEFAULT '';
+    ALTER TABLE outbox ADD COLUMN attachment_ids_json TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE outbox ADD COLUMN attachment_metadata_json TEXT NOT NULL DEFAULT '[]';
+    CREATE TABLE campaign_attachments (
+        id TEXT PRIMARY KEY, filename TEXT NOT NULL, mime TEXT NOT NULL,
+        size INTEGER NOT NULL, content BLOB NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    """,
+    """
+    CREATE TABLE company_discovery_sources (
+        external_id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        source_url TEXT NOT NULL DEFAULT '', address TEXT NOT NULL DEFAULT '',
+        observed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    """,
+    """
+    ALTER TABLE company_email_jobs ADD COLUMN mode TEXT NOT NULL DEFAULT 'quick';
+    CREATE TABLE company_social_profiles (
+        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        url TEXT NOT NULL, network TEXT NOT NULL, source_url TEXT NOT NULL,
+        found_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(company_id,url)
+    );
+    """,
+    """
+    CREATE TABLE company_filter_views (
+        id TEXT PRIMARY KEY,name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+        filters_json TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    """,
+    # Snapshot sequence spacing independently of mutable campaign content.
+    """
+    ALTER TABLE outbox ADD COLUMN delay_days INTEGER CHECK(delay_days IS NULL OR delay_days >= 0);
+    UPDATE outbox SET delay_days=0 WHERE kind='sequence' AND step=1;
+    -- Legacy schedules are cumulative. Recover only an unambiguous whole-day
+    -- interval from adjacent queued snapshots. Missing/invalid intervals stay NULL
+    -- and are held; never guess zero or consult a possibly edited campaign.
+    UPDATE outbox SET delay_days=(
+        SELECT CAST(ROUND(julianday(outbox.send_at)-julianday(p.send_at)) AS INTEGER)
+        FROM outbox p WHERE p.campaign_id=outbox.campaign_id
+          AND p.prospect_id=outbox.prospect_id AND p.kind='sequence'
+          AND p.step=outbox.step-1
+    ) WHERE kind='sequence' AND campaign_id!='' AND step>1
+      AND EXISTS (
+        SELECT 1 FROM outbox p WHERE p.campaign_id=outbox.campaign_id
+          AND p.prospect_id=outbox.prospect_id AND p.kind='sequence'
+          AND p.step=outbox.step-1
+          AND julianday(outbox.send_at)-julianday(p.send_at)>=0
+          AND ABS((julianday(outbox.send_at)-julianday(p.send_at))-
+                  ROUND(julianday(outbox.send_at)-julianday(p.send_at)))<0.000001
+      );
+    """,
+
+    # Reusable criteria and bounded diagnostics for durable email jobs.
+    """
+    CREATE TABLE target_profiles (id TEXT PRIMARY KEY,name TEXT NOT NULL,criteria_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+    ALTER TABLE company_email_job_items ADD COLUMN diagnostic_json TEXT NOT NULL DEFAULT '{}';
+    ALTER TABLE company_email_job_items ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
+    """,
+    # Operational review and explicit outcomes; do not invent legacy approval times.
+    """
+    ALTER TABLE outbox ADD COLUMN approved_at TEXT;
+    CREATE TRIGGER record_outbox_approval_insert AFTER INSERT ON outbox
+      WHEN NEW.status='approved' AND NEW.approved_at IS NULL BEGIN
+        UPDATE outbox SET approved_at=CURRENT_TIMESTAMP WHERE id=NEW.id;
+      END;
+    CREATE TRIGGER record_outbox_approval_update AFTER UPDATE OF status ON outbox
+      WHEN NEW.status='approved' AND NEW.approved_at IS NULL BEGIN
+        UPDATE outbox SET approved_at=CURRENT_TIMESTAMP WHERE id=NEW.id;
+      END;
+    CREATE TABLE conversation_reviews (conversation_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL,
+        reviewed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE conversation_outcomes (conversation_id TEXT PRIMARY KEY,qualified INTEGER,
+        meeting INTEGER,qualified_at TEXT,meeting_at TEXT,note TEXT NOT NULL DEFAULT '',revision INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+    """,
+    """
+    CREATE TABLE workflow_templates(id TEXT PRIMARY KEY,name TEXT NOT NULL,payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE opportunities(id TEXT PRIMARY KEY,prospect_id TEXT NOT NULL,campaign_id TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL,stage TEXT NOT NULL,owner TEXT NOT NULL DEFAULT '',next_action TEXT NOT NULL DEFAULT '',
+        next_due TEXT NOT NULL DEFAULT '',note TEXT NOT NULL DEFAULT '',revision INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE opportunity_conversations(opportunity_id TEXT NOT NULL,conversation_id TEXT PRIMARY KEY,
+        campaign_id TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+    CREATE INDEX opportunities_next ON opportunities(stage,next_due);
+    """,
+    """
+    CREATE TABLE company_field_candidates (
+      id TEXT PRIMARY KEY,company_id TEXT NOT NULL,field TEXT NOT NULL,value TEXT NOT NULL,
+      source_url TEXT NOT NULL,entity TEXT NOT NULL DEFAULT '',contact_label TEXT NOT NULL DEFAULT '',
+      method TEXT NOT NULL DEFAULT 'extruct',status TEXT NOT NULL DEFAULT 'pending',
+      checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+    CREATE INDEX company_field_candidates_company ON company_field_candidates(company_id,status);
+    """,
+
+    """
+    ALTER TABLE company_people_jobs ADD COLUMN criteria_json TEXT NOT NULL DEFAULT '';
+    CREATE TABLE decision_maker_results (
+        job_id TEXT NOT NULL,candidate_id TEXT NOT NULL,verdict TEXT NOT NULL,
+        fit_json TEXT NOT NULL,evidence_at TEXT NOT NULL DEFAULT '',candidate_json TEXT NOT NULL,
+        PRIMARY KEY(job_id,candidate_id));
+    CREATE INDEX decision_maker_results_job ON decision_maker_results(job_id,verdict);
+    """,
+    """
+    CREATE TABLE contact_email_research (
+        id TEXT PRIMARY KEY,contact_id TEXT NOT NULL,status TEXT NOT NULL,
+        config_json TEXT NOT NULL,snapshot_json TEXT NOT NULL,
+        stop_requested INTEGER NOT NULL DEFAULT 0,diagnostics_json TEXT NOT NULL DEFAULT '[]',
+        links_json TEXT NOT NULL DEFAULT '[]',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        finished_at TEXT NOT NULL DEFAULT '');
+    CREATE INDEX contact_email_research_contact ON contact_email_research(contact_id,created_at);
+    CREATE TABLE contact_email_findings (
+        id TEXT PRIMARY KEY,job_id TEXT NOT NULL,email TEXT NOT NULL,kind TEXT NOT NULL,
+        source_url TEXT NOT NULL,method TEXT NOT NULL,found_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        adopted_at TEXT NOT NULL DEFAULT '');
+    CREATE INDEX contact_email_findings_job ON contact_email_findings(job_id);
+    """,
+    """
+    CREATE TABLE company_reports (
+        id TEXT PRIMARY KEY, company_id TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL, ai_json TEXT DEFAULT '',
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX company_reports_company ON company_reports(company_id,created_at);
+    """,
+
 ]
+
+# Same known-email rule as the company list; no network or guessed addresses.
+_EMPTY_COMPANY_CONTACTS = """
+    c.removed_at IS NULL
+    AND TRIM(COALESCE(c.domain, '')) = ''
+    AND TRIM(COALESCE(c.website, '')) = ''
+    AND TRIM(COALESCE(c.phone, '')) = ''
+    AND NOT EXISTS (SELECT 1 FROM company_public_emails e
+                    WHERE e.company_id=c.id AND valid_company_email(e.email))
+    AND NOT EXISTS (SELECT 1 FROM prospects p WHERE p.company_id=c.id
+                    AND (TRIM(COALESCE(p.phone, '')) != '' OR
+                         (valid_company_email(p.email) AND COALESCE(p.email_status, '') != 'invalid')))
+"""
 
 BRAIN_PROVIDERS = ("claude", "codex")
 _USAGE_LOG_COLUMN = {"claude": "claude_calls", "codex": "codex_calls"}
@@ -471,11 +699,29 @@ class StateManager:
             async with db.execute("PRAGMA user_version") as cursor:
                 (version,) = await cursor.fetchone()
 
-            for target, script in enumerate(MIGRATIONS, start=1):
-                if version < target:
-                    await db.executescript(script)
-                    await db.execute(f"PRAGMA user_version = {target}")
-                    await db.commit()
+            if version >= len(MIGRATIONS):
+                return
+            # Serialize schema changes across requests/processes, then re-read the
+            # version under that lock. executescript would implicitly COMMIT and
+            # release it; complete_statement preserves trigger bodies while each
+            # statement executes inside our single transaction.
+            await db.execute('BEGIN IMMEDIATE')
+            try:
+                version=(await (await db.execute('PRAGMA user_version')).fetchone())[0]
+                for target, script in enumerate(MIGRATIONS,start=1):
+                    if version>=target:continue
+                    statement=''
+                    for char in script:
+                        statement+=char
+                        if char==';' and sqlite3.complete_statement(statement):
+                            await db.execute(statement)
+                            statement=''
+                    if statement.strip():await db.execute(statement)
+                    await db.execute(f'PRAGMA user_version = {target}')
+                await db.commit()
+            except BaseException:
+                await db.rollback()
+                raise
 
     # ── Companies ──
 
@@ -535,6 +781,55 @@ class StateManager:
                             company.id = row[0]
                             break
         return company.id
+
+    async def upsert_maps_company(self, biz, query):
+        """Stable place identity first. Shared domains never collapse branches.
+
+        Existing values win; discovery only fills blank contact fields. Source
+        aliases retain provenance without replacing an older provider ID.
+        """
+        import re
+        def norm(value):
+            return re.sub(r'[^\w]', '', (value or '').casefold())
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            await db.execute('BEGIN IMMEDIATE')
+            row = await (await db.execute(
+                "SELECT c.* FROM company_discovery_sources s JOIN companies c ON c.id=s.company_id WHERE s.external_id=?",
+                (biz.external_id,))).fetchone()
+            if row is None:
+                row = await (await db.execute('SELECT * FROM companies WHERE external_id=?', (biz.external_id,))).fetchone()
+            domain_row = None
+            if biz.domain:
+                domain_row = await (await db.execute('SELECT * FROM companies WHERE domain=?', (biz.domain,))).fetchone()
+            if row is None and domain_row:
+                # Only reconcile a legacy source when name AND phone agree.
+                # A different Maps ID is a different location even if phones match.
+                mapped = await (await db.execute('SELECT 1 FROM company_discovery_sources WHERE company_id=?', (domain_row['id'],))).fetchone()
+                if not mapped and not (domain_row['external_id'] or '').startswith('google_maps:') and norm(domain_row['name']) == norm(biz.name) and norm(biz.phone) and norm(domain_row['phone']) == norm(biz.phone):
+                    row = domain_row
+            is_new = row is None
+            company_id = row['id'] if row else _new_id()
+            if row:
+                await db.execute("""UPDATE companies SET
+                    website=CASE WHEN TRIM(COALESCE(website,''))='' THEN ? ELSE website END,
+                    phone=CASE WHEN TRIM(COALESCE(phone,''))='' THEN ? ELSE phone END,
+                    location=CASE WHEN TRIM(COALESCE(location,''))='' THEN ? ELSE location END,
+                    updated_at=? WHERE id=?""", (biz.website,biz.phone,biz.location,_utcnow().isoformat(),company_id))
+            else:
+                # The historical domain index is unique. A branch retains its
+                # website but leaves that optional identity key empty.
+                await db.execute("""INSERT INTO companies
+                    (id,name,domain,website,phone,industry,location,source,source_url,external_id)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    (company_id,biz.name,'' if domain_row else biz.domain,biz.website,biz.phone,
+                     biz.category or query.term,biz.location,'discover:google_maps',biz.source_url,biz.external_id))
+            await db.execute("""INSERT INTO company_discovery_sources(external_id,company_id,source_url,address)
+                VALUES(?,?,?,?) ON CONFLICT(external_id) DO UPDATE SET
+                company_id=excluded.company_id,source_url=excluded.source_url,address=excluded.address,observed_at=CURRENT_TIMESTAMP""",
+                (biz.external_id,company_id,biz.source_url,biz.address))
+            await db.commit()
+        return company_id, is_new
 
     async def update_company_signals(
         self,
@@ -625,11 +920,80 @@ class StateManager:
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
-                "SELECT * FROM prospects WHERE company_id = ? ORDER BY score DESC",
+                "SELECT * FROM prospects WHERE company_id = ? AND id NOT IN (SELECT prospect_id FROM contact_trash) ORDER BY score DESC",
                 (company_id,),
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [self._prospect_from_row(r) for r in rows]
+
+    async def save_company_social_profiles(self, company_id, profiles):
+        async with self._connect() as db:
+            await db.executemany("""INSERT INTO company_social_profiles(company_id,url,network,source_url)
+                VALUES (?,?,?,?) ON CONFLICT(company_id,url) DO UPDATE SET source_url=excluded.source_url""",
+                [(company_id,p['url'],p['network'],p['source_url']) for p in profiles])
+            await db.commit()
+
+    async def save_public_company_emails(self, company_id: str, emails: list[str], source_url: str,
+                                         checks: dict | None = None):
+        from harvey.collectors.company_contacts import normalize_email
+        rows = []
+        for email in emails:
+            normalized = normalize_email(email)
+            if normalized:
+                rows.append((company_id, normalized, source_url,
+                             json.dumps((checks or {}).get(email, {})), bool(checks)))
+        async with self._connect() as db:
+            await db.executemany(
+                "INSERT INTO company_public_emails(company_id, email, source_url, validation_json, checked_at) "
+                "VALUES (?, ?, ?, ?, CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END) "
+                "ON CONFLICT(company_id, email) DO UPDATE SET "
+                "source_url=excluded.source_url, "
+                "validation_json=CASE WHEN excluded.checked_at IS NOT NULL THEN excluded.validation_json "
+                "ELSE company_public_emails.validation_json END, "
+                "checked_at=COALESCE(excluded.checked_at, company_public_emails.checked_at)", rows)
+            await db.commit()
+
+    async def cleanup_unreachable_companies(self, company_ids=None):
+        """Remove contactless companies from active inventory, preserving undo/history."""
+        from harvey.collectors.company_contacts import valid_email
+        batch = uuid.uuid4().hex
+        async with self._connect() as db:
+            await db.create_function('valid_company_email', 1,
+                                     lambda value: int(valid_email(value or '')), deterministic=True)
+            await db.execute('BEGIN IMMEDIATE')
+            active = await (await db.execute(
+                "SELECT 1 FROM company_email_jobs WHERE status IN ('queued', 'running') UNION ALL SELECT 1 FROM company_people_jobs WHERE status IN ('queued', 'running') LIMIT 1")).fetchone()
+            if active:
+                return {'status': 'busy', 'removed': 0}
+            scope = '' if company_ids is None else ' AND c.id IN (' + ','.join('?' for _ in company_ids) + ')'
+            rows = await (await db.execute('SELECT c.id FROM companies c WHERE ' + _EMPTY_COMPANY_CONTACTS + scope, company_ids or [])).fetchall()
+            await db.executemany(
+                'UPDATE companies SET removed_at=CURRENT_TIMESTAMP, cleanup_batch=? WHERE id=?',
+                [(batch, row[0]) for row in rows])
+            await db.commit()
+        return {'status': 'completed', 'removed': len(rows), 'batch_id': batch if rows else None}
+
+    async def remove_selected_companies(self, ids):
+        """Soft-remove explicit company IDs; retain linked contacts and history."""
+        batch = uuid.uuid4().hex
+        async with self._connect() as db:
+            await db.execute('BEGIN IMMEDIATE')
+            active = await (await db.execute("SELECT 1 FROM company_email_jobs WHERE status IN ('queued','running') UNION ALL SELECT 1 FROM company_people_jobs WHERE status IN ('queued','running') LIMIT 1")).fetchone()
+            if active:
+                return {'status': 'busy', 'removed': 0}
+            placeholders = ','.join('?' for _ in ids)
+            cursor = await db.execute(f'UPDATE companies SET removed_at=CURRENT_TIMESTAMP, cleanup_batch=? WHERE removed_at IS NULL AND id IN ({placeholders})', (batch, *ids))
+            removed = cursor.rowcount
+            await db.commit()
+        return {'status': 'completed', 'removed': removed, 'batch_id': batch if removed else None}
+
+    async def restore_company_cleanup(self, batch_id):
+        async with self._connect() as db:
+            cursor = await db.execute(
+                'UPDATE companies SET removed_at=NULL, cleanup_batch=NULL WHERE cleanup_batch=? AND removed_at IS NOT NULL',
+                (batch_id,))
+            await db.commit()
+            return cursor.rowcount
 
     async def company_exists(self, domain: str) -> bool:
         async with self._connect() as db:
@@ -662,8 +1026,8 @@ class StateManager:
                     email_status, phone, phone_verified, linkedin_url, title,
                     seniority, department, source, source_url, status, score,
                     personalization_notes, company, industry, company_size,
-                    created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    created_at, updated_at, contact_type, do_not_contact, block_reason, blocked_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     prospect.id, prospect.company_id,
                     prospect.first_name, prospect.last_name,
@@ -677,7 +1041,7 @@ class StateManager:
                     prospect.personalization_notes,
                     prospect.company, prospect.industry, prospect.company_size,
                     prospect.created_at.isoformat(),
-                    prospect.updated_at.isoformat(),
+                    prospect.updated_at.isoformat(), prospect.contact_type, int(prospect.do_not_contact), prospect.block_reason, prospect.blocked_at,
                 ),
             )
             await db.commit()
@@ -828,21 +1192,31 @@ class StateManager:
         provider: str = "",
         thread_ref: str = "",
         in_reply_to: str = "",
+        delay_days: int | None = None,
     ) -> str | None:
         """Queue one outgoing email. Returns its id, or None when the
         (campaign, prospect, step) slot already exists — the double-send guard."""
+        if delay_days is not None and (type(delay_days) is not int or delay_days < 0):
+            raise ValueError("delay_days must be a non-negative integer")
+        if kind == 'sequence' and int(step) == 1:
+            delay_days = 0
         item_id = _new_id()
         async with self._connect() as db:
+            await db.execute('BEGIN IMMEDIATE')
+            blocked = await (await db.execute("SELECT 1 FROM prospects WHERE id=? AND (do_not_contact=1 OR status='opted_out')", (prospect_id,))).fetchone()
+            suppressed = await (await db.execute('SELECT 1 FROM contact_suppressions WHERE email=?', (_norm(to_email),))).fetchone()
+            if blocked or suppressed:
+                return None
             cursor = await db.execute(
                 """INSERT OR IGNORE INTO outbox
                    (id, campaign_id, prospect_id, conversation_id, step, kind,
                     to_email, subject, body, status, send_at, provider,
-                    thread_ref, in_reply_to)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    thread_ref, in_reply_to, delay_days)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     item_id, campaign_id, prospect_id, conversation_id,
                     int(step), kind, _norm(to_email), subject, body,
-                    status, send_at, provider, thread_ref, in_reply_to,
+                    status, send_at, provider, thread_ref, in_reply_to, delay_days,
                 ),
             )
             await db.commit()
@@ -853,6 +1227,8 @@ class StateManager:
         status: str | None = None,
         due_before: str | None = None,
         limit: int = 200,
+        sequence_ready: bool = False,
+        campaign_id: str | None = None,
     ) -> list[dict]:
         where, params = [], []
         if status:
@@ -860,6 +1236,16 @@ class StateManager:
             params.append(status)
         if due_before:
             where.append("(send_at IS NULL OR send_at <= ?)")
+            params.append(due_before)
+        if campaign_id is not None:
+            where.append('campaign_id = ?')
+            params.append(campaign_id)
+        if sequence_ready:
+            if not due_before:
+                raise ValueError("sequence readiness requires a cutoff")
+            # Filter before LIMIT so held sequences cannot starve other contacts.
+            from harvey.delivery_readiness import SEQUENCE_READY_SQL
+            where.append(SEQUENCE_READY_SQL)
             params.append(due_before)
         sql = "SELECT * FROM outbox"
         if where:
@@ -895,23 +1281,43 @@ class StateManager:
                 f"UPDATE outbox SET {sets}, updated_at = ? WHERE id = ?",
                 (*fields.values(), _utcnow().isoformat(), item_id),
             )
+            if fields.get('status') == 'sent' and fields.get('sent_at'):
+                # Record success and defer the next snapshot in one transaction.
+                # Python preserves the timestamp's microseconds; SQLite date
+                # formatting would round the advertised minimum spacing down.
+                rows = await (await db.execute("""SELECT n.id,n.delay_days FROM outbox n
+                    JOIN outbox p ON p.campaign_id=n.campaign_id AND p.prospect_id=n.prospect_id
+                      AND n.step=p.step+1
+                    WHERE p.id=? AND p.kind='sequence' AND p.campaign_id!=''
+                      AND n.kind='sequence' AND n.status IN ('pending_review','approved')
+                      AND n.delay_days IS NOT NULL""", (item_id,))).fetchall()
+                for next_id, delay in rows:
+                    try:
+                        timestamp = datetime.fromisoformat(fields['sent_at'].replace('Z', '+00:00'))
+                        if timestamp.tzinfo:
+                            timestamp = timestamp.astimezone(timezone.utc).replace(tzinfo=None)
+                        earliest = (timestamp + timedelta(days=delay)).isoformat()
+                    except (ValueError, TypeError, OverflowError):
+                        continue  # Invalid evidence never unlocks a successor.
+                    await db.execute("""UPDATE outbox SET send_at=?,updated_at=?
+                        WHERE id=? AND (send_at IS NULL OR julianday(send_at)<julianday(?))""",
+                        (earliest, _utcnow().isoformat(), next_id, earliest))
             await db.commit()
 
-    async def approve_outbox(self, item_id: str | None = None) -> int:
-        """Approve one pending item, or ALL pending when item_id is None."""
+    async def approve_outbox(self, item_id: str | None = None, *, campaign_id: str | None = None) -> int:
+        """Approve explicit pending items, optionally within one campaign only."""
+        where = ["status='pending_review'",
+                 "NOT EXISTS (SELECT 1 FROM prospects p WHERE p.id=outbox.prospect_id AND (p.do_not_contact=1 OR p.status='opted_out'))",
+                 "NOT EXISTS (SELECT 1 FROM contact_suppressions s WHERE s.email=lower(outbox.to_email))"]
+        params = [_utcnow().isoformat()]
+        if item_id is not None:
+            where.append('id=?')
+            params.append(item_id)
+        if campaign_id is not None:
+            where.append('campaign_id=?')
+            params.append(campaign_id)
         async with self._connect() as db:
-            if item_id:
-                cursor = await db.execute(
-                    "UPDATE outbox SET status = 'approved', updated_at = ? "
-                    "WHERE id = ? AND status = 'pending_review'",
-                    (_utcnow().isoformat(), item_id),
-                )
-            else:
-                cursor = await db.execute(
-                    "UPDATE outbox SET status = 'approved', updated_at = ? "
-                    "WHERE status = 'pending_review'",
-                    (_utcnow().isoformat(),),
-                )
+            cursor = await db.execute("UPDATE outbox SET status='approved',updated_at=? WHERE "+' AND '.join(where), params)
             await db.commit()
             return cursor.rowcount
 
@@ -1007,7 +1413,7 @@ class StateManager:
 
     async def set_signal_status(self, code: str, status: str) -> bool:
         """Confirm / reject a proposed signal. Only confirmed signals are
-        collected — Harvey proposes, the user decides."""
+        collected — Siveron proposes, the user decides."""
         if status not in ("proposed", "confirmed", "rejected"):
             raise ValueError(f"invalid signal status: {status}")
         async with self._connect() as db:
@@ -1178,6 +1584,7 @@ class StateManager:
             f"SELECT company_id FROM positive "
             f"WHERE signal_code IN ({req_ph}) AND company_id != '' "
             "AND confidence >= ? "
+            "AND company_id NOT IN (SELECT id FROM companies WHERE removed_at IS NOT NULL) "
             "GROUP BY company_id HAVING COUNT(DISTINCT signal_code) = ?"
         )
         params: list = [*require, float(min_confidence), len(set(require))]
@@ -1217,7 +1624,7 @@ class StateManager:
                 f"""SELECT c.id, c.name, c.domain
                    FROM companies c
                    {_LAST_PROFILED_JOIN}
-                   WHERE c.domain != ''
+                   WHERE c.removed_at IS NULL AND c.domain != ''
                      AND ({_LAST_PROFILED} IS NULL
                           OR {_LAST_PROFILED} < datetime('now', ?))
                    ORDER BY {_LAST_PROFILED} IS NOT NULL, {_LAST_PROFILED}
@@ -1231,7 +1638,7 @@ class StateManager:
             async with db.execute(
                 f"""SELECT COUNT(*) FROM companies c
                    {_LAST_PROFILED_JOIN}
-                   WHERE c.domain != ''
+                   WHERE c.removed_at IS NULL AND c.domain != ''
                      AND ({_LAST_PROFILED} IS NULL
                           OR {_LAST_PROFILED} < datetime('now', ?))""",
                 (f"-{int(stale_days)} days",),
@@ -1272,7 +1679,7 @@ class StateManager:
                 """SELECT c.id, c.name, c.domain, c.industry
                    FROM companies c
                    LEFT JOIN prospects p ON p.company_id = c.id
-                   WHERE c.domain != ''
+                   WHERE c.removed_at IS NULL AND c.domain != ''
                      AND (c.prospects_checked_at IS NULL
                           OR c.prospects_checked_at < datetime('now', ?))
                    GROUP BY c.id
@@ -1375,6 +1782,25 @@ class StateManager:
         await self.set_setting(key, str(value))
         return value
 
+    async def reserve_setting(self, key: str, amount: int, limit: int) -> bool:
+        """Atomically reserve a quota before making an external request."""
+        if amount < 0 or limit < 0:
+            raise ValueError("quota amounts must be non-negative")
+        async with self._connect() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            async with db.execute("SELECT value FROM settings WHERE key = ?", (key,)) as cur:
+                row = await cur.fetchone()
+            used = int(row[0]) if row else 0
+            if used + amount > limit:
+                await db.rollback()
+                return False
+            await db.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP",
+                (key, str(used + amount)))
+            await db.commit()
+            return True
+
     async def prospect_exists(
         self, email: str = "", linkedin_url: str = "",
         first_name: str = "", last_name: str = "", company: str = "",
@@ -1408,7 +1834,7 @@ class StateManager:
     async def count_prospects_by_status(self) -> dict[str, int]:
         async with self._connect() as db:
             async with db.execute(
-                "SELECT status, COUNT(*) FROM prospects GROUP BY status"
+                "SELECT status, COUNT(*) FROM prospects WHERE id NOT IN (SELECT prospect_id FROM contact_trash) GROUP BY status"
             ) as cursor:
                 rows = await cursor.fetchall()
                 return {row[0]: row[1] for row in rows}
@@ -1474,6 +1900,17 @@ class StateManager:
             )
             await db.commit()
 
+    async def is_contact_suppressed(self, prospect_id: str, email: str = "") -> bool:
+        async with self._connect() as db:
+            row = await (await db.execute("SELECT do_not_contact,status,email FROM prospects WHERE id=?", (prospect_id,))).fetchone()
+            if row and (row[0] or row[1] == 'opted_out'):
+                return True
+            emails = [value.strip().lower() for value in (email, row[2] if row else '') if value]
+            for value in emails:
+                if await (await db.execute('SELECT 1 FROM contact_suppressions WHERE email=?', (value,))).fetchone():
+                    return True
+        return False
+
     # ── Campaigns ──
 
     async def add_campaign(self, campaign: Campaign) -> str:
@@ -1526,6 +1963,42 @@ class StateManager:
             await db.commit()
 
     # ── Conversations ──
+
+    async def record_inbound_reply(self, prospect_id: str, provider_id: str,
+                                   content: str, timestamp: datetime | None = None) -> str:
+        """Persist receipt without AI or outgoing mail; repeated polling is safe."""
+        if not provider_id or not content.strip():
+            return ""
+        async with self._connect() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM conversations WHERE prospect_id = ? ORDER BY updated_at DESC",
+                (prospect_id,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+            for row in rows:
+                if any(m.provider_id == provider_id for m in Conversation.thread_from_json(row["thread_json"])):
+                    return row["id"]
+            stored = next((row for row in rows if row["status"] == "open"), None)
+            thread = Conversation.thread_from_json(stored["thread_json"]) if stored else []
+            thread.append(Message(sender="prospect", content=content, provider_id=provider_id,
+                                  timestamp=timestamp or _utcnow()))
+            encoded = json.dumps([m.model_dump(mode="json") for m in thread])
+            if stored:
+                convo_id = stored["id"]
+                await db.execute("UPDATE conversations SET thread_json = ?, updated_at = ? WHERE id = ?",
+                                 (encoded, _utcnow().isoformat(), convo_id))
+            else:
+                convo_id = _new_id()
+                await db.execute(
+                    """INSERT INTO conversations
+                       (id, prospect_id, channel, thread_json, intent, stage, status, created_at, updated_at)
+                       VALUES (?, ?, 'email', ?, '', 'engaged', 'open', ?, ?)""",
+                    (convo_id, prospect_id, encoded, _utcnow().isoformat(), _utcnow().isoformat()),
+                )
+            await db.commit()
+        return convo_id
 
     async def add_conversation(self, convo: Conversation) -> str:
         if not convo.id:
