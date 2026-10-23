@@ -68,3 +68,8 @@ hung workers. Codex runtime remains macOS/Linux-only with the existing Windows
 refusal and capability tests. UTF-8 content is tested with a simulated CP1252
 locale. Contact-job concurrency uses an asyncio event barrier rather than a
 10ms sleep, so the two-worker assertion is independent of SQLite/filesystem speed.
+
+The restricted-mode configuration-preservation unit explicitly simulates a supported
+platform and uses a finite scripted answer sequence. It must not endlessly select
+Codex on a Windows host where the real setup correctly refuses it. The separate
+Windows rejection/Claude fallback tests continue to exercise the production guard.

@@ -32,7 +32,11 @@ def test_setup_preserves_the_configured_model_and_mode(monkeypatch):
     import harvey.setup as setup
     cfg = BrainConfig(provider='codex', model='gpt-6-luna', reasoning_effort='low',
                       codex_restricted_text=True)
-    monkeypatch.setattr(setup, '_ask', lambda prompt, default='', **kw: default)
+    # This unit checks configuration preservation on a supported platform.
+    # Windows refusal is covered by test_windows_setup_offers_claude_instead.
+    monkeypatch.setattr(hc, '_PLATFORM', 'linux')
+    answers = iter(['codex', cfg.model])
+    monkeypatch.setattr(setup, '_ask', lambda *args, **kw: next(answers))
     assert setup._ask_brain_config(cfg) == cfg
     answers = iter(['claude', ''])
     monkeypatch.setattr(setup, '_ask', lambda *args, **kw: next(answers))
