@@ -57,3 +57,10 @@ critical-review prompt. It contains no private runtime or customer data.
 [GitHub publication guide](PUBLISHING.md) covers repository remotes, credential
 exclusions and the local pre-publication check. [GitHub About text](GITHUB_ABOUT.md)
 contains the prepared short description/topics. README.md is the public project overview.
+
+## Wiki
+
+[Public wiki](https://github.com/nexdevn-dot/SIveron_Hervay2.0/wiki) provides a
+concise English entry point. Its Markdown sources live in [wiki/](wiki/Home.md).
+The live wiki uses a separate Git repository; update it separately when changing
+these sources. Link to versioned module references rather than duplicating them.

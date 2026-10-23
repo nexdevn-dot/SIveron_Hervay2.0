@@ -9,7 +9,7 @@ The interface and integrated help support **German and English**.
 (`e2632eb`). The application and local modifications remain under the **MIT license**.
 Third-party components retain their respective licenses.
 
-[Contributing](CONTRIBUTING.md) · [Setup guide](START_HERE_EN.md) ·
+[Wiki](https://github.com/nexdevn-dot/SIveron_Hervay2.0/wiki) · [Contributing](CONTRIBUTING.md) · [Setup guide](START_HERE_EN.md) ·
 [German manual](docs/HANDBUCH_DE.md) · [English user guide](docs/USER_GUIDE_EN.md) ·
 [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) ·
 [Authors](AUTHORS.md) · [Licenses](THIRD_PARTY.md)
