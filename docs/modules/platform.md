@@ -151,3 +151,12 @@ independently of the host locale. CP1252 regression tests preserve German and
 non-Latin text without decode errors or mojibake. No model access or capability
 checks change. CI prints individual test names, stops on the first failure and
 bounds each matrix job to 20 minutes for actionable cross-platform diagnostics.
+
+## Reuse contract
+
+Reuse interfaces inspected: 2026-10-23. See the
+[detailed reuse guide](../reuse/platform-and-progress.md) for inputs/outputs,
+transitive dependencies, data and side effects, failure semantics, extraction steps,
+examples and relevant tests. The [catalog](../REUSABLE_COMPONENTS.md) distinguishes
+small logic, adapter seams and application-coupled workflows; these modules are
+not a separately versioned public SDK.

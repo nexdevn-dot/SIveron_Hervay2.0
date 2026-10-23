@@ -56,3 +56,9 @@ GitHub wiki is a separate Git repository and needs a separate publication step.
 Never include secrets, customer records or private runtime configuration.
 
 Detailed contribution policy: [CONTRIBUTING.md](https://github.com/nexdevn-dot/SIveron_Hervay2.0/blob/main/CONTRIBUTING.md).
+
+## Reuse a feature in another application
+
+Start with [Reusable components](Reusable-components) for the dependency map,
+detailed contracts, diagrams and a safe offline example. Deterministic helpers,
+adapters and database-backed workflows require different extraction effort.

@@ -185,3 +185,15 @@ menu items have labels/icons only. Global cleanup remains inventory-wide and is
 identified as such in its tooltip. No sending/approval/identity logic changes.
 Entry point: `web/company-actions.js`; cleanup scope covered in
 `tests/test_company_cleanup.py`.
+
+## Reuse contract
+
+Reuse interfaces inspected: 2026-10-23. See the
+[detailed reuse guide](../reuse/signals-and-reports.md) for inputs/outputs,
+transitive dependencies, data and side effects, failure semantics, extraction steps,
+examples and relevant tests. The [catalog](../REUSABLE_COMPONENTS.md) distinguishes
+small logic, adapter seams and application-coupled workflows; these modules are
+not a separately versioned public SDK.
+
+Inventory filters and contact lifecycle have a separate
+[reuse contract](../reuse/inventory-and-contacts.md).

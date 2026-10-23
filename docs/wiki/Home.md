@@ -16,6 +16,7 @@ and local modifications remain MIT-licensed; third-party licenses are preserved.
 | Configure your own optional services | [Configuration and integrations](Configuration-and-integrations) |
 | Make a code change or submit a contribution | [Development and contributions](Development-and-contributions) |
 | Understand implementation boundaries and future work | [Project status and roadmap](Project-status-and-roadmap) |
+| Reuse a component in another project | [Reusable components](Reusable-components) |
 | Solve common setup questions | [FAQ and troubleshooting](FAQ-and-troubleshooting) |
 
 ## Development defaults

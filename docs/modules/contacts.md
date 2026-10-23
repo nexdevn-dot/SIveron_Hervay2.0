@@ -162,3 +162,15 @@ serialization, label/keyboard activation and the existing explicit Save action.
 This UI change neither enables Hunter nor starts a research job. DE/EN and
 existing values are preserved. Selection checkboxes inside research workflows
 are unchanged.
+
+## Reuse contract
+
+Reuse interfaces inspected: 2026-10-23. See the
+[detailed reuse guide](../reuse/discovery-and-research.md) for inputs/outputs,
+transitive dependencies, data and side effects, failure semantics, extraction steps,
+examples and relevant tests. The [catalog](../REUSABLE_COMPONENTS.md) distinguishes
+small logic, adapter seams and application-coupled workflows; these modules are
+not a separately versioned public SDK.
+
+For contact identity, blocking and trash boundaries, also see
+[inventory and contact reuse](../reuse/inventory-and-contacts.md).

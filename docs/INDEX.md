@@ -30,6 +30,12 @@ Contributor onboarding: [CONTRIBUTING.md](../CONTRIBUTING.md) ·
 | Approval, scheduling, delivery, replies | [Delivery and conversations](modules/delivery.md) |
 | Settings, agent controls, usage, languages, help | [Platform](modules/platform.md) |
 
+## Component reuse
+
+[Reuse catalog](REUSABLE_COMPONENTS.md) maps internal components to contracts,
+dependency diagrams and extraction guidance. Start there before copying a feature
+into another application. Try the [offline example](../examples/reuse/offline_demo.py).
+
 ## Research
 
 [Open-source candidates](OPEN_SOURCE_CANDIDATES.md) maps reusable components and workflow references to roadmap IDs. Research is not adoption.

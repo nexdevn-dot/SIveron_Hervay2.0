@@ -66,3 +66,11 @@ contact acceptance, draft preparation, approval and actual delivery. Keep these
 boundaries explicit. Do not weaken pinned Codex checks or test by sending live mail.
 Private YAML, environment secrets, authentication, database and runtime files are
 not documentation inputs. See [development](DEVELOPMENT.md) and [working rules](../AGENTS.md).
+
+## Reuse boundaries
+
+Reuse boundary review: 2026-10-23. The [component catalog](REUSABLE_COMPONENTS.md)
+separates deterministic helpers from injected adapters and database/lifecycle-bound
+workflows. Detailed diagrams describe current contracts; proposed extractions are
+labelled explicitly. HTTP routes, UI scripts and SQLite migrations are application
+boundaries, not interchangeable standalone packages.

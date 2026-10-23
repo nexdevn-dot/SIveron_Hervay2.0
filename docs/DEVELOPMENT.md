@@ -76,3 +76,10 @@ The restricted-mode configuration-preservation unit explicitly simulates a suppo
 platform and uses a finite scripted answer sequence. It must not endlessly select
 Codex on a Windows host where the real setup correctly refuses it. The separate
 Windows rejection/Claude fallback tests continue to exercise the production guard.
+
+## Offline reuse example
+
+Run `.venv/bin/python -m examples.reuse.offline_demo` after setup. It exercises
+internal contracts with mocked HTTP, synthetic records, a fake clock and a temporary
+database. It starts no model/provider research or delivery. Keep it aligned with the
+[reuse catalog](REUSABLE_COMPONENTS.md) when changing documented interfaces.

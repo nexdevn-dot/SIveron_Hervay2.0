@@ -104,3 +104,12 @@ sequential checks across jobs. Concurrent cache misses are not promised to coale
 Tests: `test_email_checks.py` mocks DNS transport to prove reuse, expiry and unknown
 recovery; checks independent syntax/transport policy and no DNS during contact or
 campaign reads. Existing lookup, CRM, gate and sender tests cover compatibility.
+
+## Reuse contract
+
+Reuse interfaces inspected: 2026-10-23. See the
+[detailed reuse guide](../reuse/web-extraction.md) for inputs/outputs,
+transitive dependencies, data and side effects, failure semantics, extraction steps,
+examples and relevant tests. The [catalog](../REUSABLE_COMPONENTS.md) distinguishes
+small logic, adapter seams and application-coupled workflows; these modules are
+not a separately versioned public SDK.

@@ -95,3 +95,12 @@ Company report snapshots (2026-10-21) reuse the latest-observation evaluator and
 source usability checks. They never activate signals or infer negative/positive facts
 from missing records. Conditional recommendations are distinct from measurements.
 See [Companies](companies.md#signal-based-company-reports-2026-10-21).
+
+## Reuse contract
+
+Reuse interfaces inspected: 2026-10-23. See the
+[detailed reuse guide](../reuse/signals-and-reports.md) for inputs/outputs,
+transitive dependencies, data and side effects, failure semantics, extraction steps,
+examples and relevant tests. The [catalog](../REUSABLE_COMPONENTS.md) distinguishes
+small logic, adapter seams and application-coupled workflows; these modules are
+not a separately versioned public SDK.

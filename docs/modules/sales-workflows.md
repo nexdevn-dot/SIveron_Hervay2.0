@@ -55,3 +55,12 @@ qualification is implied.
 List opportunities is paginated (30 rows). Search recipes are whitelisted; existing
 provider preflight remains authoritative. Templates are local snapshots, not shared
 accounts or a deployment of listmonk/Frappe CRM; those are workflow references only.
+
+## Reuse contract
+
+Reuse interfaces inspected: 2026-10-23. See the
+[detailed reuse guide](../reuse/campaigns-and-delivery.md) for inputs/outputs,
+transitive dependencies, data and side effects, failure semantics, extraction steps,
+examples and relevant tests. The [catalog](../REUSABLE_COMPONENTS.md) distinguishes
+small logic, adapter seams and application-coupled workflows; these modules are
+not a separately versioned public SDK.

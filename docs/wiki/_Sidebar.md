@@ -6,6 +6,7 @@
 - [Configuration and integrations](Configuration-and-integrations)
 - [Development and contributions](Development-and-contributions)
 - [Project status and roadmap](Project-status-and-roadmap)
+- [Reusable components](Reusable-components)
 - [FAQ and troubleshooting](FAQ-and-troubleshooting)
 
 ## Reference

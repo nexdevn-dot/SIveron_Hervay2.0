@@ -80,3 +80,12 @@ with a small dot, one secondary phase/count line and an icon-only Search details
 button with accessible label/title; completed summaries have a small dismiss icon. No outer padded card, large heading, standalone
 progress bar or repeated action-button row is used. Mobile detail targets are 44px.
 Company navigation and complete phase progress remain inside Search details.
+
+## Reuse contract
+
+Reuse interfaces inspected: 2026-10-23. See the
+[detailed reuse guide](../reuse/discovery-and-research.md) for inputs/outputs,
+transitive dependencies, data and side effects, failure semantics, extraction steps,
+examples and relevant tests. The [catalog](../REUSABLE_COMPONENTS.md) distinguishes
+small logic, adapter seams and application-coupled workflows; these modules are
+not a separately versioned public SDK.

@@ -146,3 +146,12 @@ plus the existing ASCII transport restriction. This tightens malformed legacy in
 without admitting additional address formats or relaxing verification/status gates.
 Contact/campaign APIs use the same deterministic flags; DNS evidence remains optional
 and independent. See [web extraction](web-extraction.md).
+
+## Reuse contract
+
+Reuse interfaces inspected: 2026-10-23. See the
+[detailed reuse guide](../reuse/campaigns-and-delivery.md) for inputs/outputs,
+transitive dependencies, data and side effects, failure semantics, extraction steps,
+examples and relevant tests. The [catalog](../REUSABLE_COMPONENTS.md) distinguishes
+small logic, adapter seams and application-coupled workflows; these modules are
+not a separately versioned public SDK.
