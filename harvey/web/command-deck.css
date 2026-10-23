@@ -1,0 +1,164 @@
+/* Command deck: one decision surface, compact telemetry, details on demand.
+   Uses the existing light/dark tokens and keeps all operational colors intact. */
+:root {
+  --deck-radius: 12px;
+  --deck-space: clamp(20px, 2.6vw, 40px);
+  --deck-edge: color-mix(in srgb, var(--accent) 45%, var(--border));
+  --deck-action: #2457D6;
+}
+
+.app-sidebar { background: var(--panel); }
+.sidebar-brand { border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.sidebar-brand .brand .mark { border-radius: 9px; box-shadow: none; }
+.sidebar-nav { gap: 3px; }
+.sidebar-nav button { position: relative; transition: background .16s, color .16s; }
+.sidebar-nav button.active { box-shadow: inset 3px 0 var(--accent); }
+.sidebar-nav button.active .nav-icon { stroke-width: 2; }
+.sidebar-divider { margin-block: 10px; }
+.app-header { background: var(--panel); min-height: 76px; }
+.app-header .harvey-status {
+  min-height: 30px; padding: 5px 10px; border: 1px solid var(--border);
+  border-radius: 999px; background: var(--bg); font-size: 11px;
+}
+.app-header .icon-btn, .app-header .refresh-btn { min-height: 34px; background: var(--panel); }
+.app-header .sidebar-toggle { min-height: 44px; }
+.app-header .refresh-btn:hover, .app-header .icon-btn:hover { background: var(--panel-raised); }
+#workspace-title { color: var(--text); font-weight: 600; }
+main#workspace { padding-top: var(--deck-space); }
+.section-head h2 { font-weight: 500; letter-spacing: -.035em; }
+.section-head p { line-height: 1.7; }
+
+.deck-eyebrow {
+  color: var(--text-2); font: 500 10px/1.5 var(--mono);
+  letter-spacing: .09em; text-transform: uppercase;
+}
+#today > .section-head { margin-bottom: 28px; }
+#today > .section-head .deck-eyebrow { color: var(--accent-strong); margin-bottom: 10px; }
+#today > .section-head h2 { font-size: clamp(30px, 3vw, 42px); }
+.deck-overview {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--border-strong); border-radius: var(--deck-radius);
+  background: var(--panel); margin-bottom: 32px; overflow: hidden;
+}
+.deck-overview:empty { display: none; }
+.deck-metric {
+  display: flex; flex-direction: column; align-items: stretch; gap: 18px;
+  min-width: 0; padding: 22px 24px; border: 0; border-right: 1px solid var(--border);
+  background: transparent; color: var(--text); text-align: left; font: inherit;
+  cursor: pointer; transition: background .16s;
+}
+.deck-metric:last-child { border-right: 0; }
+.deck-metric:hover { background: var(--panel-raised); }
+.deck-metric:focus-visible { outline-offset: -4px; border-radius: var(--deck-radius); }
+.deck-metric-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.deck-metric-icon { width: 20px; height: 20px; flex: 0 0 20px; color: var(--accent-strong); }
+.deck-metric-label { font-size: 12px; font-weight: 500; color: var(--text-2); overflow-wrap: anywhere; }
+.deck-metric-arrow { color: var(--text-3); margin-left: auto; font-size: 17px; }
+.deck-metric:hover .deck-metric-arrow { color: var(--accent-strong); }
+.deck-metric-value {
+  font: 400 clamp(28px, 3vw, 40px)/1.1 var(--mono);
+  letter-spacing: -.05em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; margin-top: auto;
+}
+
+#today .today-grid { grid-template-columns: minmax(0, 1fr) 280px; gap: 28px; }
+.today-main, .today-rail { min-width: 0; }
+#today .today-rail { gap: 22px; }
+.deck-focus {
+  padding: 24px; border: 1px solid var(--deck-edge); border-radius: var(--deck-radius);
+  background: var(--panel); box-shadow: 0 4px 24px color-mix(in srgb, var(--accent) 4%, transparent);
+  position: relative; overflow: hidden;
+}
+.deck-focus::before {
+  content: ''; position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--accent);
+}
+.deck-panel-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+.deck-panel-heading h3 { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
+.deck-focus .queue { border-top: 0; }
+.deck-focus .queue-item { padding: 20px 0; flex-wrap: wrap; column-gap: 14px; }
+.deck-focus .queue-item:first-child { padding-top: 0; }
+.deck-focus .queue-item:last-child { border-bottom: 0; padding-bottom: 0; }
+.deck-focus .queue-item .qtext { flex-basis: 65%; }
+.deck-focus .qtitle { font-size: 17px; font-weight: 500; line-height: 1.45; }
+.deck-focus .qdetail { line-height: 1.75; margin-top: 7px; }
+.deck-focus .queue-item:first-child:not(.good) .btn {
+  background: var(--deck-action); color: #FFFFFF; border-color: var(--deck-action);
+}
+.deck-focus .queue-item:first-child:not(.good) .btn:hover { background: #1E46A9; }
+.deck-focus .queue-clear { align-items: flex-start; padding: 12px 0 8px; border: 0; }
+.deck-focus .queue-clear .glyph {
+  display: grid; place-items: center; width: 38px; height: 38px; flex: none;
+  background: var(--s-good-bg); border: 1px solid var(--s-good-line); border-radius: 50%;
+}
+.deck-focus .queue-clear .qdetail { max-width: 58ch; }
+.deck-activity { margin-top: 32px; }
+.deck-activity > .subhead { margin-top: 0; font-size: 12px; padding-bottom: 12px; }
+.deck-activity .activity-item { padding-block: 14px; }
+.today-rail > .rail-block > .subhead { font-size: 12px; padding-bottom: 12px; color: var(--text-2); }
+#today-figures .figure { padding-block: 12px; }
+#today-figures .v { font-size: 18px; }
+.deck-disclosure { border-block: 1px solid var(--border); }
+.deck-disclosure > summary {
+  min-height: 48px; padding: 14px 0; color: var(--text-2); font-size: 12px;
+  font-weight: 500; cursor: pointer; list-style-position: inside;
+}
+.deck-disclosure > summary:hover { color: var(--accent-strong); }
+.deck-disclosure[open] > summary { color: var(--text); }
+.deck-disclosure > .progress-bar { margin-top: 0; }
+.deck-disclosure .check-item { padding-block: 12px; }
+.deck-disclosure .figures { border-top: 0; }
+.deck-disclosure .figure:last-child { border-bottom: 0; }
+
+/* Strong focus without animation competing with work. */
+.btn { transition: background .15s, border-color .15s, color .15s; }
+.form-input:hover:not(:disabled) { border-color: var(--text-3); }
+.form-input:focus { border-color: var(--accent); }
+.btn:focus-visible, .deck-disclosure summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+button:disabled { cursor: not-allowed; }
+
+@media (max-width: 1200px) {
+  #today .today-grid { grid-template-columns: minmax(0, 1fr); }
+  #today .today-rail { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; position: static; }
+  #today-setup { grid-column: 1 / -1; }
+}
+@media (max-width: 700px) {
+  .app-header { gap: 10px; }
+  .app-header .header-controls { gap: 6px; }
+  .app-header .icon-btn, .app-header .refresh-btn { min-height: 44px; }
+  .app-header .harvey-status { font-size: 10px; padding-inline: 8px; }
+  #today > .section-head { margin-bottom: 22px; }
+  .deck-overview { margin-bottom: 24px; }
+  .deck-metric { padding: 16px 12px; gap: 14px; }
+  .deck-metric-top { align-items: flex-start; gap: 5px; flex-wrap: wrap; }
+  .deck-metric-label { font-size: 11px; flex-basis: 100%; order: 1; }
+  .deck-metric-arrow { font-size: 12px; line-height: 1; }
+  .deck-metric-value { font-size: 28px; }
+  .deck-focus { padding: 20px 18px; }
+  .deck-panel-heading { gap: 8px; margin-bottom: 18px; }
+  .deck-panel-heading .deck-eyebrow { font-size: 9px; }
+  .deck-focus .queue-item .qtext { flex-basis: calc(100% - 20px); }
+  .deck-focus .queue-item .btn { margin-left: 18px; }
+  .deck-focus .queue-clear { gap: 12px; }
+  .deck-focus .queue-clear .glyph { width: 30px; height: 30px; }
+  .deck-focus .qtitle { font-size: 16px; }
+  #today .today-rail { display: flex; flex-direction: column; }
+  #today .today-rail > * { width: 100%; }
+  .deck-disclosure > summary { min-height: 48px; }
+}
+@media (max-width: 360px) {
+  .deck-metric { padding-inline: 9px; }
+  .deck-metric-label { font-size: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
+@media print {
+  .deck-overview { display: none; }
+}
+
+/* Keep the global agent switch compact, with a full keyboard/touch target. */
+.app-header .harvey-status { gap: 5px; padding: 0 8px 0 2px; }
+#header-dot[hidden] { display: none; }
+#header-agent-toggle { width: 46px; min-height: 44px; }
+#header-agent-toggle .signal-switch-track { width: 36px; height: 22px; }
+#header-agent-toggle .signal-switch-thumb { width: 16px; height: 16px; }
+#header-agent-toggle[aria-checked="true"] .signal-switch-thumb { transform: translateX(14px); }

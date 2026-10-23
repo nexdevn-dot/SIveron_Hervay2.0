@@ -1,0 +1,17 @@
+import Blockquote from '@tiptap/extension-blockquote';
+import ListItem from '@tiptap/extension-list-item';
+import OrderedList from '@tiptap/extension-ordered-list';
+import BulletList from '@tiptap/extension-bullet-list';
+import Link from '@tiptap/extension-link';
+import Underline from '@tiptap/extension-underline';
+import Strike from '@tiptap/extension-strike';
+import Italic from '@tiptap/extension-italic';
+import Bold from '@tiptap/extension-bold';
+import { Editor } from '@tiptap/core';
+import Document from '@tiptap/extension-document';
+import Paragraph from '@tiptap/extension-paragraph';
+import Text from '@tiptap/extension-text';
+import HardBreak from '@tiptap/extension-hard-break';
+import { UndoRedo } from '@tiptap/extensions';
+import Sortable from 'sortablejs';
+window.CampaignComposerDeps = { Editor, Document, Paragraph, Text, HardBreak, UndoRedo, Sortable, Bold, Italic, Strike, Underline, Link, BulletList, OrderedList, ListItem, Blockquote };

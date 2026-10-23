@@ -1,0 +1,20 @@
+version = 1
+name = "SIveron lokal"
+
+[setup]
+script = "bash scripts/setup.sh"
+
+[[actions]]
+name = "Dashboard"
+icon = "run"
+command = "bash scripts/dashboard.sh"
+
+[[actions]]
+name = "Tests"
+icon = "test"
+command = "bash scripts/test.sh -q"
+
+[[actions]]
+name = "Umgebung prüfen"
+icon = "debug"
+command = "bash scripts/doctor.sh"

@@ -1,0 +1,23 @@
+.assistant-launch {position:fixed;right:24px;bottom:24px;z-index:90;display:flex;gap:8px;align-items:center;box-shadow:0 4px 16px #0002}
+.assistant-launch svg {width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.7}
+.assistant-panel {position:fixed;right:16px;bottom:16px;width:min(460px,calc(100vw - 32px));height:min(760px,calc(100dvh - 32px));background:var(--panel);border:1px solid var(--border-strong);border-radius:12px;z-index:110;display:flex;flex-direction:column;box-shadow:0 12px 40px #0003;color:var(--text)}
+.assistant-panel[hidden],.assistant-launch[hidden] {display:none}
+.assistant-heading {display:flex;align-items:center;gap:12px;padding:16px;border-bottom:1px solid var(--border)}
+.assistant-heading h2 {font-size:17px;margin:0;flex:1;overflow-wrap:anywhere}
+.assistant-heading button {padding:8px}
+.assistant-intro {padding:12px 16px;font-size:13px;color:var(--text-2);margin:0}
+.assistant-panel deep-chat {display:block;flex:1;min-height:100px;width:100%;border:0;background:transparent;font-family:var(--sans)}
+.assistant-result {padding:12px 16px;border-top:1px solid var(--border);overflow:auto;max-height:45%;font-size:14px}
+.assistant-result:empty {display:none}
+.assistant-result ul {padding-left:18px;margin:8px 0}
+.assistant-result table {width:100%;font-size:12px;border-collapse:collapse}
+.assistant-result td,.assistant-result th {padding:7px 4px;text-align:left;border-bottom:1px solid var(--border);overflow-wrap:anywhere}
+.assistant-result button.company-profile-link {text-align:left;white-space:normal}
+.assistant-result p {margin:6px 0}
+.assistant-suggestions {display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 12px}
+.assistant-suggestions button {font-size:12px;padding:6px 8px}
+.assistant-settings-grid {display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.assistant-settings-grid .form-group {margin:0}
+.assistant-settings-grid .full {grid-column:1/-1}
+@media(max-width:600px){.assistant-panel{right:8px;bottom:8px;width:calc(100vw - 16px);height:calc(100dvh - 16px)}.assistant-launch{right:16px;bottom:16px}.assistant-settings-grid{grid-template-columns:1fr}.assistant-result{max-height:42%}}
+

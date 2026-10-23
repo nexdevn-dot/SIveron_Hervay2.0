@@ -1,0 +1,55 @@
+# Neutral development defaults. Copy to harvey.local.yaml; fill in real
+# business details only when you choose to configure a live use case.
+persona:
+  name: SIveron
+  company: Your Company
+  role: Business Development
+  email: harvey@example.invalid
+  linkedin: ""
+  tone: professional, clear, factual
+product:
+  name: Your Product
+  description: ""
+  pricing: ""
+  key_benefits: []
+  objection_responses: {}
+  offer:
+    primary: ""
+    entry: ""
+    goal: get_reply
+    booking_method: ask_preference
+    booking_url: ""
+    meeting_duration: 15 minutes
+    meeting_owner: ""
+icp:
+  industries: []
+  discovery_terms: []
+  company_size: ""
+  titles: []
+  geography: []
+  hiring_signals: []
+  geo_coordinates: {}
+channels:
+  email:
+    enabled: false
+    provider: gmail
+    max_daily_sends: 0
+    require_approval: true
+    send_to_risky: false
+    max_bounce_rate: 0.05
+  linkedin:
+    enabled: false
+    max_daily_connections: 0
+    max_daily_messages: 0
+usage:
+  max_daily_claude_percent: 20
+  heartbeat_interval_minutes: 15
+  quiet_hours:
+    start: "22:00"
+    end: "07:00"
+    timezone: Europe/Berlin
+brain:
+  provider: codex
+  model: gpt-6-luna
+  reasoning_effort: low
+  codex_restricted_text: true
