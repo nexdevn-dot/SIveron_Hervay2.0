@@ -18,24 +18,27 @@ def _mapping_child(node, key):
 
 
 def read_sending_settings(path):
-    text=Path(path).read_text(encoding='utf-8')
+    raw=Path(path).read_bytes()
+    text=raw.decode('utf-8')
     config=yaml.safe_load(text)
     email=((config or {}).get('channels') or {}).get('email') or {}
     return {'enabled':email.get('enabled',True), 'max_daily_sends':email.get('max_daily_sends',50),
-            'revision':hashlib.sha256(text.encode()).hexdigest()}
+            'revision':hashlib.sha256(raw).hexdigest()}
 
 
 def save_sending_settings(path, payload):
     if not isinstance(payload,dict) or type(payload.get('enabled')) is not bool or type(payload.get('max_daily_sends')) is not int or not 0<=payload['max_daily_sends']<=100000:
         raise SendingSettingsError('Bitte einen Versandstatus und ein ganzzahliges Tageslimit zwischen 0 und 100000 eingeben.')
     path=Path(path)
-    text=path.read_text(encoding='utf-8')
-    if payload.get('revision')!=hashlib.sha256(text.encode()).hexdigest():
+    raw=path.read_bytes()
+    text=raw.decode('utf-8')
+    if payload.get('revision')!=hashlib.sha256(raw).hexdigest():
         raise SendingSettingsError('Die Einstellungen wurden inzwischen geändert. Bitte neu laden.')
     root=yaml.compose(text)
     email=_mapping_child(_mapping_child(root,'channels'),'email')
     if not isinstance(email,yaml.MappingNode) or email.flow_style or not email.value:
         raise SendingSettingsError('Die E-Mail-Konfiguration kann in diesem Format nicht bearbeitet werden.')
+    newline='\r\n' if '\r\n' in text else '\n'
     updates={'enabled':'true' if payload['enabled'] else 'false','max_daily_sends':str(payload['max_daily_sends'])}
     edits=[]
     for key,value in updates.items():
@@ -47,7 +50,7 @@ def save_sending_settings(path, payload):
         else:
             first=email.value[0][0].start_mark
             start=text.rfind('\n',0,first.index)+1
-            edits.append((start,start,' '*first.column+key+': '+value+'\n'))
+            edits.append((start,start,' '*first.column+key+': '+value+newline))
     for start,end,replacement in sorted(edits,reverse=True):
         text=text[:start]+replacement+text[end:]
     # Validate before replacing any configuration. Nothing else is rewritten.
@@ -58,7 +61,7 @@ def save_sending_settings(path, payload):
     mode=path.stat().st_mode & 0o777
     temporary=None
     try:
-        with tempfile.NamedTemporaryFile(mode='w',encoding='utf-8',dir=path.parent,prefix='.'+path.name+'.',delete=False) as stream:
+        with tempfile.NamedTemporaryFile(mode='w',encoding='utf-8',newline='',dir=path.parent,prefix='.'+path.name+'.',delete=False) as stream:
             temporary=Path(stream.name)
             os.chmod(temporary,mode)
             stream.write(text)
