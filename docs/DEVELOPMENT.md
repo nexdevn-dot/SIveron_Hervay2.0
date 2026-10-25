@@ -83,3 +83,15 @@ Run `.venv/bin/python -m examples.reuse.offline_demo` after setup. It exercises
 internal contracts with mocked HTTP, synthetic records, a fake clock and a temporary
 database. It starts no model/provider research or delivery. Keep it aligned with the
 [reuse catalog](REUSABLE_COMPONENTS.md) when changing documented interfaces.
+
+## WAL startup contention (2026-10-25)
+
+`StateManager._enable_wal` handles SQLITE_BUSY/SQLITE_LOCKED (including extended
+codes) while setting journal mode before the migration transaction. Short SQLite
+busy waits and asynchronous backoff share one BUSY_TIMEOUT_SECONDS startup budget.
+The journal-mode cursor is consumed/closed and the resulting mode must be WAL;
+normal connection busy timeout is restored on success. Other errors and cancellation
+propagate. Migration locking, version recheck and rollback remain unchanged.
+Tests in `test_migration_concurrency.py` cover parallel upgrades/trigger survival,
+transient lock codes, a real persistent exclusive lock with no partial migration,
+non-lock failure, refused mode, timeout restoration and cancellation.

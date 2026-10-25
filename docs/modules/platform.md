@@ -160,3 +160,12 @@ transitive dependencies, data and side effects, failure semantics, extraction st
 examples and relevant tests. The [catalog](../REUSABLE_COMPONENTS.md) distinguishes
 small logic, adapter seams and application-coupled workflows; these modules are
 not a separately versioned public SDK.
+
+## Database startup robustness (2026-10-25)
+
+Code inspected: StateManager startup now retries only transient SQLite lock errors
+while enabling WAL, with a bounded shared wait budget. The mode is checked and
+cursors closed before schema initialization; migration transactions and existing
+state are preserved. See [development verification](../DEVELOPMENT.md#wal-startup-contention-2026-10-25)
+and `tests/test_migration_concurrency.py`. No agent starts or provider calls are
+introduced by this fix.
