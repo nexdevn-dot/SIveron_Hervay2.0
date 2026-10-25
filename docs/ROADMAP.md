@@ -270,3 +270,13 @@ Optional existing-Brain explanations are separately labelled and cached. See
 GPT Researcher/Evidence supplied workflow references only, no new runtime service.
 Lighthouse/axe measurements, quantified impact and fresh audit collection remain
 proposals and must not be inferred from this reporting feature.
+
+## Local OpenAI-compatible model adapter — proposal (2026-10-25)
+
+A colleague uses llama.cpp with 16 GB VRAM. The
+[endpoint preparation guide](local-llm/README.md) supplies a synthetic API smoke
+test and an explicit implementation gap. Pending: exact server/model/platform
+identification, text/JSON capability tests, validated HTTP provider settings,
+timeout/cancellation/status handling, no cloud fallback, rejection of tool calls
+and regression coverage of existing provider boundaries. No provider or model
+support is implemented by this documentation. Docker packaging remains unverified.

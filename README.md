@@ -143,6 +143,10 @@ The product interface is called Siveron.
 
 ## Configuration and AI
 
+Using llama.cpp? See the [local model API guide](docs/local-llm/README.md) for a
+standalone OpenAI-compatible endpoint smoke test and the remaining adapter work.
+Local-model support is not implemented in Siveron yet.
+
 - `config/development.yaml`: public, neutral development template.
 - `harvey.local.yaml`: private local configuration, excluded from version control.
 - `.env`: private integration credentials, excluded from version control; `.env.example` contains empty fields.

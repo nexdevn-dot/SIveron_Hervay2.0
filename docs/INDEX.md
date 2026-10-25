@@ -20,6 +20,7 @@ Contributor onboarding: [CONTRIBUTING.md](../CONTRIBUTING.md) ·
 
 | Task | Start here |
 | --- | --- |
+| Prepare a llama.cpp OpenAI-compatible endpoint (adapter pending) | [Local model guide](local-llm/README.md) |
 | Compare free/paid research, available contacts and budgets | [Low-cost research](LOW_COST_LEAD_RESEARCH.md) |
 | Find businesses, providers, radius, progress | [Discovery](modules/discovery.md) |
 | Public page downloads, structured field suggestions | [Web extraction](modules/web-extraction.md) |

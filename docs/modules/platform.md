@@ -160,3 +160,10 @@ transitive dependencies, data and side effects, failure semantics, extraction st
 examples and relevant tests. The [catalog](../REUSABLE_COMPONENTS.md) distinguishes
 small logic, adapter seams and application-coupled workflows; these modules are
 not a separately versioned public SDK.
+
+## Local model integration assessment (2026-10-25)
+
+The [llama.cpp API guide](../local-llm/README.md) covers a standalone local endpoint
+probe and proposed adapter requirements. Source inspection confirms BrainConfig
+accepts only Claude/Codex; an OpenAI-compatible endpoint is not currently a third
+provider. No runtime behavior, model allowlist or permissions changed.
