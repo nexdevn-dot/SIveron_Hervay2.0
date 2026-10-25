@@ -160,3 +160,21 @@ transitive dependencies, data and side effects, failure semantics, extraction st
 examples and relevant tests. The [catalog](../REUSABLE_COMPONENTS.md) distinguishes
 small logic, adapter seams and application-coupled workflows; these modules are
 not a separately versioned public SDK.
+
+## Database startup robustness (2026-10-25)
+
+Code inspected: StateManager startup now retries only transient SQLite lock errors
+while enabling WAL, with a bounded shared wait budget. The mode is checked and
+cursors closed before schema initialization; migration transactions and existing
+state are preserved. See [development verification](../DEVELOPMENT.md#wal-startup-contention-2026-10-25)
+and `tests/test_migration_concurrency.py`. No agent starts or provider calls are
+introduced by this fix.
+
+## Atomic settings edits on Windows (2026-10-25)
+
+Code checked: 2026-10-25. Sending-setting revisions hash the original UTF-8 file
+bytes consistently before parsing and again before replacement. LF and CRLF
+line endings survive focused edits and missing-key insertion; temporary writes
+disable platform newline translation. A real byte change still rejects a stale
+revision. POSIX permission assertions apply only on POSIX; Windows chmod does not
+provide equivalent owner-only mode bits. See `tests/test_sending_settings.py`.

@@ -9,7 +9,9 @@ list tracked with SQLite's ``PRAGMA user_version`` so existing user DBs
 upgrade cleanly in place.
 """
 
+import asyncio
 import json
+import time
 import sqlite3
 import uuid
 from contextlib import asynccontextmanager
@@ -687,13 +689,45 @@ class StateManager:
         finally:
             await db.close()
 
+    async def _enable_wal(self, db):
+        """Bound WAL startup contention without replaying schema migrations.
+
+        Journal-mode changes can return BUSY before SQLite's usual busy handler
+        waits. Use short SQLite waits plus cooperative retries within one budget.
+        Close the result cursor before another initializer tries to migrate.
+        """
+        deadline = time.monotonic() + BUSY_TIMEOUT_SECONDS
+        delay = 0.02
+        while True:
+            remaining = max(0.0, deadline - time.monotonic())
+            wait_ms = max(0, int(min(0.1, remaining) * 1000))
+            async with db.execute(f"PRAGMA busy_timeout={wait_ms}"):
+                pass
+            try:
+                async with db.execute("PRAGMA journal_mode=WAL") as cursor:
+                    row = await cursor.fetchone()
+                if not row or str(row[0]).lower() != 'wal':
+                    raise sqlite3.OperationalError('SQLite could not enable WAL mode')
+                break
+            except sqlite3.OperationalError as error:
+                code = getattr(error, 'sqlite_errorcode', None)
+                if code is None or (code & 0xff) not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise
+                await asyncio.sleep(min(delay, remaining))
+                delay = min(delay * 2, 0.25)
+        # The short wait applies only to WAL startup, not ordinary migration/write locks.
+        async with db.execute(f"PRAGMA busy_timeout={int(BUSY_TIMEOUT_SECONDS * 1000)}"):
+            pass
+
     async def init_db(self):
         """Create/upgrade the schema. Safe to call on every startup."""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         async with self._connect() as db:
-            # WAL is persistent in the DB file: readers (dashboard) never
-            # block the writer (agent) and vice versa.
-            await db.execute("PRAGMA journal_mode=WAL")
+            # WAL is persistent, but enabling/opening it can contend at startup.
+            await self._enable_wal(db)
             await db.execute("PRAGMA synchronous=NORMAL")
 
             async with db.execute("PRAGMA user_version") as cursor:
